@@ -18,6 +18,53 @@ def sy(y):
     return int(y * DISPLAY_SCALE)
 
 
+def draw_gesture_overlay(display_img, gesture_mode, gesture_label, gesture_boxes, gesture_scores):
+    """
+    Draw gesture detection results when gesture mode is active.
+    """
+
+    if not gesture_mode:
+        return
+
+    label_text = "Gesture Mode"
+    if gesture_label:
+        label_text = f"Gesture: {gesture_label}"
+
+    cv2.putText(
+        display_img,
+        label_text,
+        (12, 210),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.75,
+        (0, 255, 255),
+        2,
+        cv2.LINE_AA
+    )
+
+    for idx, box in enumerate(gesture_boxes):
+        score = gesture_scores[idx] if idx < len(gesture_scores) else 0.0
+        x, y, w, h = box
+        cv2.rectangle(
+            display_img,
+            (sx(x), sy(y)),
+            (sx(x + w), sy(y + h)),
+            (0, 255, 255),
+            2
+        )
+
+        if gesture_label:
+            cv2.putText(
+                display_img,
+                f"{gesture_label} {score:.2f}",
+                (sx(x), max(14, sy(y) - 4)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 255),
+                2,
+                cv2.LINE_AA
+            )
+
+
 def draw_status_panel(img, photo_good, quality_score, quality_problems, adjustment):
     """
     Draw compact debug/status panel on the display image.
@@ -178,6 +225,53 @@ def draw_group_box(display_img, framing, photo_good):
     )
 
 
+def draw_gesture_overlay(display_img, gesture_mode, gesture_label, gesture_boxes, gesture_scores):
+    """
+    Draw gesture detection results when gesture mode is active.
+    """
+
+    if not gesture_mode:
+        return
+
+    label_text = "Gesture Mode"
+    if gesture_label:
+        label_text = f"Gesture: {gesture_label}"
+
+    cv2.putText(
+        display_img,
+        label_text,
+        (12, 210),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.75,
+        (0, 255, 255),
+        2,
+        cv2.LINE_AA
+    )
+
+    for idx, box in enumerate(gesture_boxes):
+        score = gesture_scores[idx] if idx < len(gesture_scores) else 0.0
+        x, y, w, h = box
+        cv2.rectangle(
+            display_img,
+            (sx(x), sy(y)),
+            (sx(x + w), sy(y + h)),
+            (0, 255, 255),
+            2
+        )
+
+        if gesture_label:
+            cv2.putText(
+                display_img,
+                f"{gesture_label} {score:.2f}",
+                (sx(x), max(14, sy(y) - 4)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                (0, 255, 255),
+                2,
+                cv2.LINE_AA
+            )
+
+
 def draw_hold_timer(display_img, hold_elapsed):
     """
     Draw raised-hand hold timer.
@@ -208,6 +302,10 @@ def draw_debug_view(
     quality_score,
     quality_problems,
     adjustment,
+    gesture_mode=False,
+    gesture_label=None,
+    gesture_boxes=None,
+    gesture_scores=None,
     hold_elapsed=None,
 ):
     """
@@ -225,6 +323,13 @@ def draw_debug_view(
     draw_skeletons(display_img, indices, all_keypoints)
     draw_face_boxes(display_img, face_boxes)
     draw_group_box(display_img, framing, photo_good)
+    draw_gesture_overlay(
+        display_img,
+        gesture_mode,
+        gesture_label,
+        gesture_boxes or [],
+        gesture_scores or [],
+    )
 
     draw_status_panel(
         display_img,

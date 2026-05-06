@@ -1,6 +1,10 @@
 import os
 
 MODEL_PATH = '../models/yolov8n-pose_int8_vela.tflite'
+GESTURE_MODEL_PATH = '../models/yolox_nano_int8_vela.tflite'
+GESTURE_LABELS = ["子","丑","寅","卯","辰","巳","午","未","申","酉","戌","亥"]
+GESTURE_HOLD_SECONDS = 3.0
+GESTURE_EXIT_LABEL = "亥"
 UART_PORT = '/dev/ttyLP1'
 BAUD_RATE = 115200
 # Lowered threshold slightly to accommodate scaled confidence

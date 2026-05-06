@@ -11,6 +11,7 @@ from vision import (
     preprocess_frame,
     run_inference,
     decode_pose_output,
+    decode_yolox_detection_output,
     apply_nms,
 )
 from photo_quality import evaluate_photo_quality
@@ -37,6 +38,7 @@ except Exception as e:
 
 
 interpreter, model_info = load_pose_model(MODEL_PATH)
+gesture_interpreter, gesture_model_info = load_pose_model(GESTURE_MODEL_PATH)
 
 
 server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -56,6 +58,10 @@ SIMULATE_MOTOR_OUTPUT = False
 motor_rig = CameraServoRig()
 mode_switcher = GestureModeSwitcher()
 pose_mode = MODE_FULL_BODY
+gesture_mode = False
+gesture_label = None
+gesture_boxes = []
+gesture_scores = []
 
 
 DEFAULT_FRAMING = {
@@ -86,49 +92,94 @@ try:
         # ==========================================
         # A. Vision pipeline
         # ==========================================
+        current_interpreter = gesture_interpreter if gesture_mode else interpreter
+        current_model_info = gesture_model_info if gesture_mode else model_info
+
         input_data, img = preprocess_frame(
             frame,
-            model_info,
+            current_model_info,
             IMG_SIZE
         )
 
         output_data = run_inference(
-            interpreter,
-            model_info,
+            current_interpreter,
+            current_model_info,
             input_data
         )
 
-        boxes, scores, all_keypoints = decode_pose_output(
-            output_data,
-            model_info,
-            IMG_SIZE,
-            CONF_THRESHOLD
-        )
+        if gesture_mode:
+            boxes, scores, class_ids = decode_yolox_detection_output(
+                output_data,
+                current_model_info,
+                IMG_SIZE,
+                CONF_THRESHOLD
+            )
 
-        indices = apply_nms(
-            boxes,
-            scores,
-            CONF_THRESHOLD,
-            NMS_THRESHOLD
-        )
+            indices = apply_nms(
+                boxes,
+                scores,
+                CONF_THRESHOLD,
+                NMS_THRESHOLD
+            )
 
-        # ==========================================
-        # B. Pose logic
-        # ==========================================
-        pose_result = analyze_people(
-            indices=indices,
-            scores=scores,
-            all_keypoints=all_keypoints,
-            img_size=IMG_SIZE,
-            keypoint_conf=0.3,
-        )
+            gesture_label = None
+            gesture_boxes = []
+            gesture_scores = []
+            all_keypoints = []
 
-        face_boxes = pose_result["face_boxes"]
-        any_hand_raised = pose_result["any_hand_raised"]
+            if len(indices) > 0:
+                best_index = indices[0][0] if hasattr(indices[0], "__len__") else indices[0]
+                best_index = int(best_index)
+                gesture_label = GESTURE_LABELS[class_ids[best_index]]
+                gesture_boxes = [boxes[best_index]]
+                gesture_scores = [scores[best_index]]
 
-        pose_mode, switched = mode_switcher.update(any_hand_raised)
-        if switched:
-            print(f"Gesture detected, switched camera mode to: {pose_mode}")
+            if gesture_label == GESTURE_EXIT_LABEL:
+                print("偵測到亥手印，結束手勢模型，回到姿態模型。")
+                gesture_mode = False
+                gesture_start_time = 0
+                gesture_label = None
+                gesture_boxes = []
+                gesture_scores = []
+
+            face_boxes = []
+            any_hand_raised = False
+            photo_good = False
+            quality_score = 0
+            quality_problems = ["Gesture mode"]
+            framing = DEFAULT_FRAMING.copy()
+
+        else:
+            boxes, scores, all_keypoints = decode_pose_output(
+                output_data,
+                model_info,
+                IMG_SIZE,
+                CONF_THRESHOLD
+            )
+
+            indices = apply_nms(
+                boxes,
+                scores,
+                CONF_THRESHOLD,
+                NMS_THRESHOLD
+            )
+
+            # ==========================================
+            # B. Pose logic
+            pose_result = analyze_people(
+                indices=indices,
+                scores=scores,
+                all_keypoints=all_keypoints,
+                img_size=IMG_SIZE,
+                keypoint_conf=0.3,
+            )
+
+            face_boxes = pose_result["face_boxes"]
+            any_hand_raised = pose_result["any_hand_raised"]
+
+            pose_mode, switched = mode_switcher.update(any_hand_raised)
+            if switched:
+                print(f"Gesture detected, switched camera mode to: {pose_mode}")
 
         # ==========================================
         # C. Photo quality
@@ -138,7 +189,7 @@ try:
         quality_problems = ["No person detected"]
         framing = DEFAULT_FRAMING.copy()
 
-        if len(indices) > 0:
+        if len(indices) > 0 and not gesture_mode:
             photo_good, quality_score, quality_problems, framing = evaluate_photo_quality(
                 indices,
                 boxes,
@@ -184,7 +235,7 @@ try:
         # ==========================================
         hold_elapsed_for_display = None
 
-        if any_hand_raised:
+        if not gesture_mode and any_hand_raised:
             if gesture_start_time == 0:
                 gesture_start_time = time.time()
                 hold_elapsed_for_display = 0.0
@@ -195,7 +246,16 @@ try:
                 hold_elapsed_for_display = elapsed
                 print(f"elapsed time: {elapsed:.2f}")
 
-                if elapsed >= 5.0:
+                if elapsed >= GESTURE_HOLD_SECONDS:
+                    print("舉手超過3秒，切換到手勢模型。")
+                    gesture_mode = True
+                    gesture_label = None
+                    gesture_boxes = []
+                    gesture_scores = []
+                    gesture_start_time = 0
+                    hold_elapsed_for_display = None
+
+                elif elapsed >= 5.0:
                     print("\n" + "="*60)
                     print("📸 PHOTO TRIGGERED!")
                     print(f"  Mode: {pose_mode}")
@@ -229,6 +289,10 @@ try:
             quality_score=quality_score,
             quality_problems=quality_problems,
             adjustment=adjustment,
+            gesture_mode=gesture_mode,
+            gesture_label=gesture_label,
+            gesture_boxes=gesture_boxes,
+            gesture_scores=gesture_scores,
             hold_elapsed=hold_elapsed_for_display,
         )
 

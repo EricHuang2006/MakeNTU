@@ -113,6 +113,63 @@ def run_inference(interpreter, model_info, input_data):
     return output_data
 
 
+def decode_yolox_detection_output(output_data, model_info, img_size, conf_threshold):
+    """
+    Decode generic YOLOX detection output into:
+        boxes: [x, y, w, h]
+        scores: confidence scores
+        class_ids: predicted class indices
+    """
+
+    output_details = model_info["output_details"]
+    scale, zero_point = output_details[0]["quantization"]
+
+    if scale == 0.0:
+        scale = 1.0
+
+    if output_data.shape[0] > output_data.shape[1]:
+        output_data = np.transpose(output_data)
+
+    output_data = output_data.astype(np.float32)
+    output_data = (output_data - zero_point) * scale
+
+    if output_data.ndim == 3:
+        output_data = output_data.reshape(-1, output_data.shape[-1])
+
+    if output_data.shape[1] < 6:
+        return [], [], []
+
+    raw_boxes = output_data[:, :4]
+    objectness = output_data[:, 4]
+    class_logits = output_data[:, 5:]
+
+    class_scores = np.max(class_logits, axis=1)
+    class_ids = np.argmax(class_logits, axis=1)
+    scores = objectness * class_scores
+
+    boxes = []
+    valid_scores = []
+    valid_class_ids = []
+
+    for idx, score in enumerate(scores):
+        if score <= conf_threshold:
+            continue
+
+        cx, cy, w, h = raw_boxes[idx]
+        x = int(cx * img_size - (w * img_size) / 2)
+        y = int(cy * img_size - (h * img_size) / 2)
+        boxes.append([
+            max(0, x),
+            max(0, y),
+            int(max(0, w * img_size)),
+            int(max(0, h * img_size)),
+        ])
+        valid_scores.append(float(score))
+        valid_class_ids.append(int(class_ids[idx]))
+
+    return boxes, valid_scores, valid_class_ids
+
+
 def decode_pose_output(output_data, model_info, img_size, conf_threshold):
     """
     Decode YOLOv8 pose output into:
