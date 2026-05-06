@@ -16,7 +16,11 @@ from vision import (
 from photo_quality import evaluate_photo_quality
 from camera_adjustment import compute_camera_adjustment
 from drawing import draw_debug_view
-from pose_logic import analyze_people, compute_temporary_pan_angle
+from pose_logic import analyze_people, GestureModeSwitcher, MODE_FULL_BODY
+from motor_control import (
+    CameraServoRig,
+    compute_camera_target_angles,
+)
 from DC_sender import send_frame_to_discord
 
 
@@ -48,6 +52,10 @@ print(f"PC Connected from: {addr}")
 # 2. Runtime State
 # ==========================================
 gesture_start_time = 0
+SIMULATE_MOTOR_OUTPUT = True
+motor_rig = CameraServoRig()
+mode_switcher = GestureModeSwitcher()
+pose_mode = MODE_FULL_BODY
 
 
 DEFAULT_FRAMING = {
@@ -117,18 +125,10 @@ try:
 
         face_boxes = pose_result["face_boxes"]
         any_hand_raised = pose_result["any_hand_raised"]
-        target_nose_x = pose_result["target_nose_x"]
 
-        # Temporary old motor tracking.
-        # Later this should be replaced by camera_adjustment output.
-        target_angle = compute_temporary_pan_angle(
-            target_nose_x=target_nose_x,
-            img_size=IMG_SIZE,
-            camera_fov=C270_FOV,
-        )
-
-        if target_angle is not None and ser:
-            ser.write(f"{target_angle}\n".encode())
+        pose_mode, switched = mode_switcher.update(any_hand_raised)
+        if switched:
+            print(f"Gesture detected, switched camera mode to: {pose_mode}")
 
         # ==========================================
         # C. Photo quality
@@ -146,6 +146,26 @@ try:
                 IMG_SIZE
             )
 
+        motor_adjustment = compute_camera_target_angles(
+            framing,
+            pose_mode,
+            IMG_SIZE,
+        )
+
+        if motor_rig.enabled and not SIMULATE_MOTOR_OUTPUT:
+            motor_rig.set_angles(
+                pan=motor_adjustment["pan_angle"],
+                tilt=motor_adjustment["tilt_angle"],
+                height=motor_adjustment["height_angle"],
+            )
+        else:
+            print(
+                f"[Motor OUTPUT] mode={pose_mode} "
+                f"pan={motor_adjustment['pan_angle']:.1f} "
+                f"tilt={motor_adjustment['tilt_angle']:.1f} "
+                f"height={motor_adjustment['height_angle']:.1f}"
+            )
+
         # ==========================================
         # D. Camera adjustment recommendation
         # ==========================================
@@ -153,6 +173,7 @@ try:
             framing,
             IMG_SIZE
         )
+        adjustment["summary"] = motor_adjustment["summary"]
 
         print(
             "Quality:", quality_score,
@@ -177,7 +198,7 @@ try:
                 hold_elapsed_for_display = elapsed
                 print(f"elapsed time: {elapsed:.2f}")
 
-                if elapsed >= 2.0:
+                if elapsed >= 5.0:
                     print("觸發拍照！正在傳送至 Discord...")
                     send_frame_to_discord(frame, DISCORD_WEBHOOK_URL)
                     gesture_start_time = 0

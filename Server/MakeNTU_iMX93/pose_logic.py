@@ -1,5 +1,29 @@
 import numpy as np
 
+MODE_FULL_BODY = 'full_body'
+MODE_HALF_BODY = 'half_body'
+
+
+class GestureModeSwitcher:
+    def __init__(self, initial_mode=MODE_FULL_BODY):
+        self.current_mode = initial_mode
+        self.raise_active = False
+
+    def update(self, any_hand_raised):
+        if any_hand_raised and not self.raise_active:
+            self.current_mode = (
+                MODE_HALF_BODY
+                if self.current_mode == MODE_FULL_BODY
+                else MODE_FULL_BODY
+            )
+            self.raise_active = True
+            return self.current_mode, True
+
+        if not any_hand_raised and self.raise_active:
+            self.raise_active = False
+
+        return self.current_mode, False
+
 
 def estimate_face_box(kpts, conf, img_size, keypoint_conf=0.3):
     """
