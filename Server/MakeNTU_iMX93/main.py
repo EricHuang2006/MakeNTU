@@ -52,7 +52,7 @@ print(f"PC Connected from: {addr}")
 # 2. Runtime State
 # ==========================================
 gesture_start_time = 0
-SIMULATE_MOTOR_OUTPUT = True
+SIMULATE_MOTOR_OUTPUT = False
 motor_rig = CameraServoRig()
 mode_switcher = GestureModeSwitcher()
 pose_mode = MODE_FULL_BODY
@@ -160,10 +160,7 @@ try:
             )
         else:
             print(
-                f"[Motor OUTPUT] mode={pose_mode} "
-                f"pan={motor_adjustment['pan_angle']:.1f} "
-                f"tilt={motor_adjustment['tilt_angle']:.1f} "
-                f"height={motor_adjustment['height_angle']:.1f}"
+                f"[Motor OUTPUT] {motor_adjustment['summary']}"
             )
 
         # ==========================================
@@ -199,7 +196,15 @@ try:
                 print(f"elapsed time: {elapsed:.2f}")
 
                 if elapsed >= 5.0:
-                    print("觸發拍照！正在傳送至 Discord...")
+                    print("\n" + "="*60)
+                    print("📸 PHOTO TRIGGERED!")
+                    print(f"  Mode: {pose_mode}")
+                    print(f"  Quality Score: {quality_score}")
+                    print(f"  Photo Good: {photo_good}")
+                    print(f"  Motor Angles: {motor_adjustment['summary']}")
+                    print(f"  People Count: {framing['people_count']}")
+                    print("  Sending to Discord...")
+                    print("="*60 + "\n")
                     send_frame_to_discord(frame, DISCORD_WEBHOOK_URL)
                     gesture_start_time = 0
                     hold_elapsed_for_display = None

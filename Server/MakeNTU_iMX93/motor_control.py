@@ -135,14 +135,23 @@ def compute_camera_target_angles(framing, mode, img_size):
     tilt_angle = max(0, min(180, tilt_angle))
     height_angle = max(0, min(180, height_angle))
 
+    pan_offset = pan_angle - PAN_CENTER_ANGLE
+    tilt_offset = tilt_angle - TILT_CENTER_ANGLE
+    height_offset = height_angle - HEIGHT_CENTER_ANGLE
+
     summary = (
-        f"mode={mode} pan={pan_angle:.1f} tilt={tilt_angle:.1f} height={height_angle:.1f}"
+        f"mode={mode} pan={pan_angle:.1f}°(offset:{pan_offset:+.1f}°) "
+        f"tilt={tilt_angle:.1f}°(offset:{tilt_offset:+.1f}°) "
+        f"height={height_angle:.1f}°(offset:{height_offset:+.1f}°)"
     )
 
     return {
         'pan_angle': pan_angle,
         'tilt_angle': tilt_angle,
         'height_angle': height_angle,
+        'pan_offset': pan_offset,
+        'tilt_offset': tilt_offset,
+        'height_offset': height_offset,
         'summary': summary,
     }
 
