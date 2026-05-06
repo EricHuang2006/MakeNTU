@@ -1,6 +1,6 @@
 import os
 
-MODEL_PATH = 'yolov8n-pose_int8_vela.tflite'
+MODEL_PATH = '../models/yolov8n-pose_int8_vela.tflite'
 UART_PORT = '/dev/ttyLP1'
 BAUD_RATE = 115200
 # Lowered threshold slightly to accommodate scaled confidence
