@@ -1,7 +1,7 @@
 import os
 
 MODEL_PATH = '../models/yolov8n-pose_int8_vela.tflite'
-GESTURE_MODEL_PATH = '../models/yolox_nano_int8_vela.tflite'
+GESTURE_MODEL_PATH = '../models/yolox_nano_full_integer_quant_vela.tflite'
 GESTURE_LABELS = ["子","丑","寅","卯","辰","巳","午","未","申","酉","戌","亥"]
 GESTURE_LABELS_DISPLAY = ["Zi","Chou","Yin","Mao","Chen","Si","Wu","Wei","Shen","You","Xu","Hai"]
 GESTURE_HOLD_SECONDS = 3.0
@@ -9,8 +9,8 @@ GESTURE_EXIT_LABEL = "亥"
 UART_PORT = '/dev/ttyLP1'
 BAUD_RATE = 115200
 CONF_THRESHOLD = 0.4
-GESTURE_CONF_THRESHOLD = 0.3
-GESTURE_DEBUG_CONF_THRESHOLD = 0.2
+GESTURE_CONF_THRESHOLD = 0.05
+GESTURE_DEBUG_CONF_THRESHOLD = 0.03
 NMS_THRESHOLD = 0.3
 IMG_SIZE = 320
 DISPLAY_SIZE = 640

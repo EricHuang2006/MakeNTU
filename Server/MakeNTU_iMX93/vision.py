@@ -63,13 +63,16 @@ def preprocess_frame(frame, model_info, img_size):
 
     ai_img = cv2.resize(frame, (width, height))
     
-    # 🌟 最終拼圖 1：恢復 RGB！從分數暴跌證實了模型對顏色極度敏感
-    img_process = cv2.cvtColor(ai_img, cv2.COLOR_BGR2RGB)
+    # 🌟 修正 1：換回 BGR！模型認證 BGR 分數更高
+    img_process = ai_img 
 
     in_scale = model_info["in_scale"]
     in_zp = model_info["in_zp"]
     in_dtype = model_info["in_dtype"]
     in_shape = model_info["in_shape"]
+
+    # 🌟 修正 2：加這行讓我看透這顆模型的量化參數！
+    print(f"[DEBUG QUANT] in_scale: {in_scale}, in_zp: {in_zp}")
 
     if in_dtype == np.int8:
         if in_scale > 0:
