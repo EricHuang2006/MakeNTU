@@ -9,7 +9,7 @@ import numpy as np
 # Replace with your i.MX 93's actual IP address
 # You can find it by typing 'ifconfig' on the i.MX 93 terminal
 # IMX93_IP = '192.168.0.73' 
-IMX93_IP = '172.20.10.4' 
+IMX93_IP = '192.168.0.73' 
 PORT = 9999
 
 # ==========================================

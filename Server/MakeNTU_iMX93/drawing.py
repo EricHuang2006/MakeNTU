@@ -1,5 +1,5 @@
 import cv2
-from config import DISPLAY_SIZE, DISPLAY_SCALE
+from config import DISPLAY_SIZE
 
 
 SKELETON = [
@@ -10,15 +10,15 @@ SKELETON = [
 ]
 
 
-def sx(x):
-    return int(x * DISPLAY_SCALE)
+def sx(x, scale):
+    return int(x * scale)
 
 
-def sy(y):
-    return int(y * DISPLAY_SCALE)
+def sy(y, scale):
+    return int(y * scale)
 
 
-def draw_gesture_overlay(display_img, gesture_mode, gesture_label, gesture_boxes, gesture_scores):
+def draw_gesture_overlay(display_img, gesture_mode, gesture_label, gesture_boxes, gesture_scores, scale):
     """
     Draw gesture detection results when gesture mode is active.
     """
@@ -127,12 +127,12 @@ def draw_status_panel(img, photo_good, quality_score, quality_problems, adjustme
         y += 26
 
 
-def draw_skeletons(display_img, indices, all_keypoints):
+def draw_skeletons(display_img, indices, all_keypoints, scale):
     """
     Draw COCO pose skeletons.
     """
 
-    if len(indices) == 0:
+    if len(indices) == 0 or len(all_keypoints) == 0:
         return
 
     for i in indices:
@@ -146,15 +146,15 @@ def draw_skeletons(display_img, indices, all_keypoints):
             if c1 > 0.3 and c2 > 0.3:
                 cv2.line(
                     display_img,
-                    (sx(x1), sy(y1)),
-                    (sx(x2), sy(y2)),
+                    (sx(x1, scale), sy(y1, scale)),
+                    (sx(x2, scale), sy(y2, scale)),
                     (255, 0, 0),
                     2
                 )
 
                 cv2.circle(
                     display_img,
-                    (sx(x1), sy(y1)),
+                    (sx(x1, scale), sy(y1, scale)),
                     3,
                     (0, 0, 255),
                     -1
@@ -162,14 +162,14 @@ def draw_skeletons(display_img, indices, all_keypoints):
 
                 cv2.circle(
                     display_img,
-                    (sx(x2), sy(y2)),
+                    (sx(x2, scale), sy(y2, scale)),
                     3,
                     (0, 0, 255),
                     -1
                 )
 
 
-def draw_face_boxes(display_img, face_boxes):
+def draw_face_boxes(display_img, face_boxes, scale):
     """
     Draw estimated face boxes.
     """
@@ -177,8 +177,8 @@ def draw_face_boxes(display_img, face_boxes):
     for fx1, fy1, fx2, fy2, conf in face_boxes:
         cv2.rectangle(
             display_img,
-            (sx(fx1), sy(fy1)),
-            (sx(fx2), sy(fy2)),
+            (sx(fx1, scale), sy(fy1, scale)),
+            (sx(fx2, scale), sy(fy2, scale)),
             (0, 255, 0),
             2
         )
@@ -186,7 +186,7 @@ def draw_face_boxes(display_img, face_boxes):
         cv2.putText(
             display_img,
             f"{conf:.2f}",
-            (sx(fx1), max(14, sy(fy1) - 4)),
+            (sx(fx1, scale), max(14, sy(fy1, scale) - 4)),
             cv2.FONT_HERSHEY_SIMPLEX,
             0.65,
             (0, 255, 0),
@@ -195,7 +195,7 @@ def draw_face_boxes(display_img, face_boxes):
         )
 
 
-def draw_group_box(display_img, framing, photo_good):
+def draw_group_box(display_img, framing, photo_good, scale):
     """
     Draw group framing box and group center.
     """
@@ -210,22 +210,22 @@ def draw_group_box(display_img, framing, photo_good):
 
     cv2.rectangle(
         display_img,
-        (sx(gx1), sy(gy1)),
-        (sx(gx2), sy(gy2)),
+        (sx(gx1, scale), sy(gy1, scale)),
+        (sx(gx2, scale), sy(gy2, scale)),
         group_color,
         2
     )
 
     cv2.circle(
         display_img,
-        (sx(gcx), sy(gcy)),
+        (sx(gcx, scale), sy(gcy, scale)),
         5,
         group_color,
         -1
     )
 
 
-def draw_gesture_overlay(display_img, gesture_mode, gesture_label, gesture_boxes, gesture_scores):
+def draw_gesture_overlay(display_img, gesture_mode, gesture_label, gesture_boxes, gesture_scores, gesture_debug_boxes, gesture_debug_scores, scale):
     """
     Draw gesture detection results when gesture mode is active.
     """
@@ -248,13 +248,35 @@ def draw_gesture_overlay(display_img, gesture_mode, gesture_label, gesture_boxes
         cv2.LINE_AA
     )
 
+    if len(gesture_debug_boxes) > 0 and len(gesture_debug_boxes) <= 50:
+        for idx, box in enumerate(gesture_debug_boxes):
+            score = gesture_debug_scores[idx] if idx < len(gesture_debug_scores) else 0.0
+            x, y, w, h = box
+            cv2.rectangle(
+                display_img,
+                (sx(x, scale), sy(y, scale)),
+                (sx(x + w, scale), sy(y + h, scale)),
+                (0, 128, 255),
+                1
+            )
+            cv2.putText(
+                display_img,
+                f"DBG {score:.2f}",
+                (sx(x, scale), max(14, sy(y, scale) - 4)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (0, 128, 255),
+                1,
+                cv2.LINE_AA
+            )
+
     for idx, box in enumerate(gesture_boxes):
         score = gesture_scores[idx] if idx < len(gesture_scores) else 0.0
         x, y, w, h = box
         cv2.rectangle(
             display_img,
-            (sx(x), sy(y)),
-            (sx(x + w), sy(y + h)),
+            (sx(x, scale), sy(y, scale)),
+            (sx(x + w, scale), sy(y + h, scale)),
             (0, 255, 255),
             2
         )
@@ -263,7 +285,7 @@ def draw_gesture_overlay(display_img, gesture_mode, gesture_label, gesture_boxes
             cv2.putText(
                 display_img,
                 f"{gesture_label} {score:.2f}",
-                (sx(x), max(14, sy(y) - 4)),
+                (sx(x, scale), max(14, sy(y, scale) - 4)),
                 cv2.FONT_HERSHEY_SIMPLEX,
                 0.6,
                 (0, 255, 255),
@@ -306,29 +328,35 @@ def draw_debug_view(
     gesture_label=None,
     gesture_boxes=None,
     gesture_scores=None,
+    gesture_debug_boxes=None,
+    gesture_debug_scores=None,
     hold_elapsed=None,
 ):
     """
     Main drawing function.
 
     Input:
-        img: 320x320 AI image
+        img: 416x416 AI image
 
     Output:
         display_img: 640x640 debug image ready for streaming
     """
 
     display_img = cv2.resize(img, (DISPLAY_SIZE, DISPLAY_SIZE))
+    scale = DISPLAY_SIZE / float(img.shape[0])
 
-    draw_skeletons(display_img, indices, all_keypoints)
-    draw_face_boxes(display_img, face_boxes)
-    draw_group_box(display_img, framing, photo_good)
+    draw_skeletons(display_img, indices, all_keypoints, scale)
+    draw_face_boxes(display_img, face_boxes, scale)
+    draw_group_box(display_img, framing, photo_good, scale)
     draw_gesture_overlay(
         display_img,
         gesture_mode,
         gesture_label,
         gesture_boxes or [],
         gesture_scores or [],
+        gesture_debug_boxes or [],
+        gesture_debug_scores or [],
+        scale,
     )
 
     draw_status_panel(
