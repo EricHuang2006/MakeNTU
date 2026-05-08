@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MakeNTU Camera Control</title>
+  <style>
+    :root { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: #f6f7f9; color: #16181d; }
+    header { padding: 20px 28px; background: white; border-bottom: 1px solid #e2e5ea; }
+    h1 { margin: 0; font-size: 24px; }
+    main { display: grid; grid-template-columns: minmax(320px, 1fr) 380px; gap: 20px; padding: 20px; }
+    .card { background: white; border: 1px solid #e2e5ea; border-radius: 16px; padding: 18px; box-shadow: 0 8px 24px rgba(0,0,0,.05); }
+    .video-wrap { display: grid; place-items: center; min-height: 360px; background: #111; border-radius: 14px; overflow: hidden; }
+    img { width: 100%; max-height: 70vh; object-fit: contain; }
+    label { display: block; font-weight: 650; margin-top: 14px; margin-bottom: 6px; }
+    input, select { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ccd2dc; border-radius: 10px; font-size: 15px; }
+    input[type="checkbox"] { width: auto; }
+    .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+    .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
+    button { border: 0; border-radius: 12px; padding: 12px 14px; font-weight: 750; cursor: pointer; background: #1f6feb; color: white; }
+    button.secondary { background: #57606a; }
+    button.danger { background: #cf222e; }
+    button.photo { background: #116329; }
+    pre { white-space: pre-wrap; word-break: break-word; background: #f0f2f5; padding: 12px; border-radius: 12px; min-height: 120px; max-height: 330px; overflow: auto; }
+    .note { color: #57606a; font-size: 14px; margin-top: 8px; }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>MakeNTU Camera Control</h1>
+    <div id="bridgeLine">Connecting...</div>
+    <div class="note">Photos are saved on the PC bridge in the <code>captures/</code> folder.</div>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Live preview</h2>
+      <div class="video-wrap">
+        <img id="video" src="/video" alt="Live video stream" />
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Settings</h2>
+
+      <label for="mode">Mode</label>
+      <select id="mode">
+        <option value="full_body">Full body</option>
+        <option value="upper_body">Upper body</option>
+        <option value="gesture">Gesture</option>
+      </select>
+
+      <label for="interval">Photo interval, seconds</label>
+      <input id="interval" type="number" min="0.5" step="0.5" value="5" />
+
+      <label for="quality">JPEG quality</label>
+      <input id="quality" type="range" min="10" max="95" value="75" />
+      <div>Quality: <span id="qualityValue">75</span></div>
+
+      <label>
+        <input id="gestureMode" type="checkbox" /> Force gesture mode
+      </label>
+
+      <label>Servo</label>
+      <div class="row">
+        <input id="pan" type="number" step="1" value="0" placeholder="pan" />
+        <input id="tilt" type="number" step="1" value="0" placeholder="tilt" />
+        <input id="height" type="number" step="1" value="0" placeholder="height" />
+      </div>
+
+      <div class="buttons">
+        <button onclick="startCapture()">Start Auto Save</button>
+        <button class="danger" onclick="stopCapture()">Stop</button>
+        <button class="photo" onclick="takePhoto()">Take Photo</button>
+        <button class="secondary" onclick="saveSettings()">Save Settings</button>
+      </div>
+
+      <h2>Status</h2>
+      <pre id="status">Waiting for status...</pre>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    $('quality').addEventListener('input', () => {
+      $('qualityValue').textContent = $('quality').value;
+    });
+
+    function currentSettings() {
+      return {
+        mode: $('mode').value,
+        photo_interval_sec: Number($('interval').value),
+        quality: Number($('quality').value),
+        gesture_mode: $('gestureMode').checked,
+        pan: Number($('pan').value),
+        tilt: Number($('tilt').value),
+        height: Number($('height').value),
+      };
+    }
+
+    async function postJson(url, body = {}) {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(body),
+      });
+      const data = await response.json();
+      $('status').textContent = JSON.stringify(data, null, 2);
+      return data;
+    }
+
+    async function startCapture() { await postJson('/api/start', currentSettings()); }
+    async function stopCapture() { await postJson('/api/stop'); }
+    async function takePhoto() { await postJson('/api/photo'); }
+    async function saveSettings() { await postJson('/api/settings', currentSettings()); }
+
+    async function refreshStatus() {
+      try {
+        const combined = await fetch('/api/status').then(r => r.json());
+        const bridge = combined.bridge || {};
+        $('bridgeLine').textContent = bridge.video_connected
+          ? `Connected to board ${bridge.board_ip}:${bridge.video_port}; PC saves to ${bridge.capture_dir}; saved ${bridge.saved_count || 0}`
+          : `Video not connected: ${bridge.video_error || 'waiting'}`;
+        $('status').textContent = JSON.stringify(combined, null, 2);
+      } catch (err) {
+        $('status').textContent = String(err);
+      }
+    }
+
+    refreshStatus();
+    setInterval(refreshStatus, 3000);
+  </script>
+</body>
+</html>
