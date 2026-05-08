@@ -5,7 +5,6 @@ from event_logger import log_event
 from fsm_output import build_motor_command
 from fsm_states import (
     SCAN_PAN_ANGLES,
-    SCAN_TILT_ANGLES,
     STATE_FAILURE,
     STATE_HORIZONTAL_FIX,
     STATE_PHOTO_CAPTURE,
@@ -15,6 +14,7 @@ from fsm_states import (
 from tracking_geometry import (
     angles_reached,
     clamp_angle,
+    compute_top_edge_face_target_tilt,
     extract_body_targets,
     extract_face_targets,
     get_leftmost_target,
@@ -23,6 +23,7 @@ from tracking_geometry import (
     register_unique_angles,
     select_centered_body_target,
     select_centered_face_target,
+    select_top_edge_face_target,
 )
 
 
@@ -191,6 +192,7 @@ def update_horizontal_fix(fsm, _context):
 
 
 def update_vertical_sweep(fsm, context):
+    scan_angles = fsm.state_data["scan_angles"]
     target_tilt = fsm.state_data["target_tilt"]
 
     if not angles_reached(fsm.current_angles["tilt"], target_tilt):
@@ -201,8 +203,10 @@ def update_vertical_sweep(fsm, context):
             f"VERTICAL_SWEEP: moving to tilt={target_tilt:.1f}",
         )
 
-    if fsm.state_data["settle_until"] == 0.0:
+    if not fsm.state_data["sweep_started"]:
+        fsm.state_data["sweep_started"] = True
         fsm.state_data["settle_until"] = time.monotonic() + SCAN_SETTLE_SECONDS
+        log_event("state", "Vertical sweep reached start angle. Starting face detection sweep.", throttle_seconds=0.0)
         return build_motor_command(
             fsm.current_angles["pan"],
             target_tilt,
@@ -218,6 +222,14 @@ def update_vertical_sweep(fsm, context):
             f"VERTICAL_SWEEP: waiting at tilt={target_tilt:.1f}",
         )
 
+    if LOG_NOW_ANGLE:
+        log_event(
+            "angle",
+            f"Now angle tilt={fsm.current_angles['tilt']:.1f}",
+            throttle_key=f"vertical_now_angle_{fsm.state_data['scan_index']}",
+            throttle_seconds=0.0,
+        )
+
     face_targets = extract_face_targets(
         context["face_boxes"],
         context["IMG_SIZE"],
@@ -227,23 +239,41 @@ def update_vertical_sweep(fsm, context):
     if face_targets:
         log_event(
             "detect",
-            f"Vertical sweep sees {len(face_targets)} face target(s) at tilt={fsm.current_angles['tilt']:.1f}",
+            "Vertical sweep detected a valid face.",
             throttle_key="vertical_sweep_detect",
         )
 
-    centered_face_target = select_centered_face_target(face_targets, context["IMG_SIZE"])
     candidate_angles = []
+    top_edge_face_target = select_top_edge_face_target(face_targets, context["IMG_SIZE"])
 
-    if centered_face_target is not None:
-        candidate_angles = [centered_face_target["centered_angle"]]
+    if top_edge_face_target is not None and not fsm.state_data["top_edge_target_recorded"]:
+        computed_tilt = compute_top_edge_face_target_tilt(
+            fsm.current_angles["tilt"],
+            top_edge_face_target,
+            context["IMG_SIZE"],
+        )
+        candidate_angles = [computed_tilt]
+        fsm.state_data["top_edge_target_recorded"] = True
         log_event(
             "detect",
             (
-                "Face center aligned with frame center "
-                f"at tilt={fsm.current_angles['tilt']:.1f}"
+                "Face reached frame top edge "
+                f"at tilt={fsm.current_angles['tilt']:.1f}, "
+                f"computed target tilt={computed_tilt:.1f}"
             ),
-            throttle_key="vertical_center_hit",
+            throttle_key="vertical_top_edge_hit",
         )
+    else:
+        centered_face_target = select_centered_face_target(face_targets, context["IMG_SIZE"])
+        if centered_face_target is not None:
+            log_event(
+                "detect",
+                (
+                    "Face center aligned with frame center "
+                    f"at tilt={fsm.current_angles['tilt']:.1f}"
+                ),
+                throttle_key="vertical_center_hit",
+            )
 
     new_angles = register_unique_angles(fsm.state_data["recorded_angles"], candidate_angles)
 
@@ -255,10 +285,10 @@ def update_vertical_sweep(fsm, context):
             throttle_seconds=0.0,
         )
 
-    if centered_face_target is not None:
-        fsm.state_data["snapshot_targets"] = [centered_face_target]
+    if top_edge_face_target is not None:
+        fsm.state_data["snapshot_targets"] = [top_edge_face_target]
 
-    if fsm.state_data["scan_index"] >= len(SCAN_TILT_ANGLES) - 1:
+    if fsm.state_data["scan_index"] >= len(scan_angles) - 1:
         if fsm.state_data["recorded_angles"]:
             fsm.switch_state(STATE_VERTICAL_FIX)
         else:
@@ -267,8 +297,8 @@ def update_vertical_sweep(fsm, context):
         return fsm.last_command
 
     fsm.state_data["scan_index"] += 1
-    fsm.state_data["target_tilt"] = float(SCAN_TILT_ANGLES[fsm.state_data["scan_index"]])
-    fsm.state_data["settle_until"] = time.monotonic() + SCAN_SETTLE_SECONDS
+    fsm.state_data["target_tilt"] = float(scan_angles[fsm.state_data["scan_index"]])
+    fsm.state_data["settle_until"] = 0.0
     fsm.debug_problems = [
         f"VERTICAL_SWEEP: recorded={len(fsm.state_data['recorded_angles'])} new={len(new_angles)}"
     ]

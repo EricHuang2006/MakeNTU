@@ -5,7 +5,7 @@ from fsm_output import build_motor_command
 from fsm_states import (
     FAILURE_TIMEOUT_SECONDS,
     SCAN_PAN_ANGLES,
-    SCAN_TILT_ANGLES,
+    build_vertical_scan_angles,
     STATE_AUTO_CONTROL,
     STATE_FAILURE,
     STATE_HORIZONTAL_FIX,
@@ -36,11 +36,15 @@ def build_state_data(previous_state_data, current_angles, state):
             "target_pan": current_angles["pan"],
         }
     if state == STATE_VERTICAL_SWEEP:
+        scan_angles = build_vertical_scan_angles(current_angles["tilt"])
         return {
             "scan_index": 0,
+            "scan_angles": scan_angles,
             "recorded_angles": [],
             "snapshot_targets": [],
-            "target_tilt": float(SCAN_TILT_ANGLES[0]),
+            "top_edge_target_recorded": False,
+            "target_tilt": float(scan_angles[0]),
+            "sweep_started": False,
             "settle_until": 0.0,
         }
     if state == STATE_VERTICAL_FIX:

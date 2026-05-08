@@ -1,3 +1,8 @@
+import math
+
+from config import CAMERA_CY, CAMERA_FY
+
+
 ANGLE_EPSILON = 0.75
 PERSON_MATCH_ANGLE_DEG = 4.0
 EDGE_MARGIN_PX = 8
@@ -9,6 +14,32 @@ BODY_KEYPOINT_CONFIDENCE = 0.3
 
 def clamp_angle(angle):
     return max(0.0, min(180.0, float(angle)))
+
+
+def _scale_y(pixel_y, img_size):
+    raw_image_height = CAMERA_CY * 2.0
+    return (pixel_y / float(img_size)) * raw_image_height
+
+
+def pixel_y_to_angle(pixel_y, img_size):
+    dy = _scale_y(pixel_y, img_size) - CAMERA_CY
+    return math.degrees(math.atan(dy / CAMERA_FY))
+
+
+def compute_centered_tilt_angle(current_tilt, center_y, img_size):
+    return clamp_angle(current_tilt + pixel_y_to_angle(center_y, img_size))
+
+
+def compute_top_third_tilt_angle(centered_tilt_angle, desired_ratio, img_size):
+    frame_center_y = img_size * 0.5
+    target_y = img_size * desired_ratio
+    shift = pixel_y_to_angle(frame_center_y, img_size) - pixel_y_to_angle(target_y, img_size)
+    return clamp_angle(centered_tilt_angle + shift)
+
+
+def compute_top_edge_face_target_tilt(current_tilt, face_target, img_size, desired_ratio=1.0 / 3.0):
+    centered_tilt = compute_centered_tilt_angle(current_tilt, face_target["center_y"], img_size)
+    return compute_top_third_tilt_angle(centered_tilt, desired_ratio, img_size)
 
 
 def normalize_indices(indices):
@@ -104,6 +135,19 @@ def select_centered_face_target(targets, img_size, tolerance_px=FACE_CENTER_TOLE
 
     centered_targets.sort(key=lambda item: item[0])
     return centered_targets[0][1]
+
+
+def select_top_edge_face_target(targets, img_size, top_ratio=0.10):
+    if not targets:
+        return None
+
+    top_limit = img_size * top_ratio
+    top_edge_targets = [target for target in targets if target["top_y"] <= top_limit]
+    if not top_edge_targets:
+        return None
+
+    top_edge_targets.sort(key=lambda target: target["top_y"])
+    return top_edge_targets[0]
 
 
 def register_unique_angles(existing_angles, candidate_angles, threshold_deg=PERSON_MATCH_ANGLE_DEG):

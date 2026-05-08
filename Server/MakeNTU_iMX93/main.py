@@ -28,7 +28,20 @@ from vision import (
     preprocess_frame,
     run_inference,
 )
-from fsm_states import STATE_FAILURE, STATE_HORIZONTAL_SWEEP
+from fsm_states import (
+    STATE_FAILURE,
+    STATE_HORIZONTAL_SWEEP,
+    STATE_PHOTO_CAPTURE,
+    STATE_VERTICAL_FIX,
+    STATE_VERTICAL_SWEEP,
+)
+
+
+VERTICAL_FACE_ONLY_STATES = {
+    STATE_VERTICAL_SWEEP,
+    STATE_VERTICAL_FIX,
+    STATE_PHOTO_CAPTURE,
+}
 
 
 def initialize_uart():
@@ -214,12 +227,13 @@ def main():
 
             frame_counter += 1
             if fsm.state != STATE_HORIZONTAL_SWEEP and fsm.state != STATE_FAILURE:
-                log_once_per_change(
-                    "detect",
-                    "people_detected_count",
-                    len(indices),
-                    f"Detected {len(indices)} skeleton target(s).",
-                )
+                if fsm.state not in VERTICAL_FACE_ONLY_STATES:
+                    log_once_per_change(
+                        "detect",
+                        "people_detected_count",
+                        len(indices),
+                        f"Detected {len(indices)} skeleton target(s).",
+                    )
                 log_once_per_change(
                     "detect",
                     "faces_detected_count",
@@ -245,10 +259,12 @@ def main():
 
             debug_view = fsm.get_debug_view(indices)
             display_face_boxes = face_boxes if fsm.state != STATE_HORIZONTAL_SWEEP else []
+            display_indices = [] if fsm.state in VERTICAL_FACE_ONLY_STATES else indices
+            display_keypoints = [] if fsm.state in VERTICAL_FACE_ONLY_STATES else all_keypoints
             display_img = draw_debug_view(
                 img=img,
-                indices=indices,
-                all_keypoints=all_keypoints,
+                indices=display_indices,
+                all_keypoints=display_keypoints,
                 face_boxes=display_face_boxes,
                 photo_good=debug_view["photo_good"],
                 quality_score=debug_view["quality_score"],

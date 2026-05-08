@@ -4,20 +4,18 @@
 This state machine describes the auto-tracking and capturing process for the camera servo rig. It strictly separates state transitions (triggers) from internal state actions (do-activities).
 
 ## State Machine Diagram (Mermaid)
-
 ```mermaid
 stateDiagram-v2
-    %% State Definitions with Internal Actions (UML Notation: do / action)
+    %% State Definitions
     state "SETTING" as SETTING
     state "MANUAL_CONTROL" as MANUAL_CONTROL
     state "AUTO_CONTROL" as AUTO_CONTROL
-    
-    state "HORIZONTAL_SWEEP 
-    state "HORIZONTAL_FIX
-    state "VERTICAL_SWEEP" 
-    state "VERTICAL_FIX" 
-    state "FAILURE<br> do / red light 5s" as FAILURE
-    state "PHOTO_CAPTURE<br> do / green light<br> do / take photo" as PHOTO_CAPTURE
+    state "HORIZONTAL_SWEEP" as HORIZONTAL_SWEEP
+    state "HORIZONTAL_FIX" as HORIZONTAL_FIX
+    state "VERTICAL_SWEEP" as VERTICAL_SWEEP
+    state "VERTICAL_FIX" as VERTICAL_FIX
+    state "FAILURE" as FAILURE
+    state "PHOTO_CAPTURE" as PHOTO_CAPTURE
 
     %% Initial Transitions
     [*] --> SETTING
@@ -41,6 +39,7 @@ stateDiagram-v2
     
     PHOTO_CAPTURE --> AUTO_CONTROL : [Process Complete]
     FAILURE --> AUTO_CONTROL : [Timeout Completed]
+```
 
 Descriptions:
 
