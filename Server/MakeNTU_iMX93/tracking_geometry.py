@@ -6,6 +6,7 @@ from config import CAMERA_CY, CAMERA_FY
 ANGLE_EPSILON = 0.75
 PERSON_MATCH_ANGLE_DEG = 4.0
 EDGE_MARGIN_PX = 8
+EDGE_EXIT_CENTER_MARGIN_PX = 32
 BODY_CENTER_TOLERANCE_PX = 6
 FACE_CENTER_TOLERANCE_PX = 6
 BODY_VISIBLE_MIN_KEYPOINTS = 5
@@ -161,27 +162,29 @@ def register_unique_angles(existing_angles, candidate_angles, threshold_deg=PERS
     return new_angles
 
 
-def leftmost_target_has_left_frame(targets):
+def rightmost_target_has_right_frame(targets, img_size):
     if not targets:
         return False
 
-    leftmost = min(targets, key=lambda target: target["center_x"])
-    return leftmost["left_x"] <= EDGE_MARGIN_PX
+    rightmost = max(targets, key=lambda target: target["center_x"])
+    right_edge_reached = rightmost["right_x"] >= (img_size - EDGE_MARGIN_PX)
+    center_in_exit_zone = rightmost["center_x"] >= (img_size - EDGE_EXIT_CENTER_MARGIN_PX)
+    return right_edge_reached and center_in_exit_zone
 
 
-def has_target_on_right_side(targets, img_size):
+def has_target_on_left_side(targets, img_size):
     if not targets:
         return False
 
     frame_center_x = img_size / 2.0
-    return any(target["center_x"] >= frame_center_x for target in targets)
+    return any(target["center_x"] <= frame_center_x for target in targets)
 
 
-def get_leftmost_target(targets):
+def get_rightmost_target(targets):
     if not targets:
         return None
 
-    return min(targets, key=lambda target: target["center_x"])
+    return max(targets, key=lambda target: target["center_x"])
 
 
 def highest_face_near_top(targets, img_size):

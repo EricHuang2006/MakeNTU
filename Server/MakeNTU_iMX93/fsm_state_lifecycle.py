@@ -4,7 +4,7 @@ from event_logger import log_event
 from fsm_output import build_motor_command
 from fsm_states import (
     FAILURE_TIMEOUT_SECONDS,
-    SCAN_PAN_ANGLES,
+    build_horizontal_scan_angles,
     build_vertical_scan_angles,
     STATE_AUTO_CONTROL,
     STATE_FAILURE,
@@ -20,13 +20,15 @@ from tracking_geometry import clamp_angle
 
 def build_state_data(previous_state_data, current_angles, state):
     if state == STATE_HORIZONTAL_SWEEP:
+        scan_angles = build_horizontal_scan_angles()
         return {
             "scan_index": 0,
+            "scan_angles": scan_angles,
             "recorded_angles": [],
-            "left_exit_seen": False,
-            "leftmost_angle": None,
+            "right_exit_seen": False,
+            "rightmost_angle": None,
             "leave_angle": None,
-            "target_pan": float(SCAN_PAN_ANGLES[0]),
+            "target_pan": float(scan_angles[0]),
             "sweep_started": False,
             "settle_until": 0.0,
         }
@@ -52,6 +54,11 @@ def build_state_data(previous_state_data, current_angles, state):
             "recorded_angles": list(previous_state_data.get("recorded_angles", [])),
             "snapshot_targets": list(previous_state_data.get("snapshot_targets", [])),
             "target_tilt": current_angles["tilt"],
+        }
+    if state == STATE_PHOTO_CAPTURE:
+        return {
+            "flash_until": 0.0,
+            "captured": False,
         }
     return {}
 
@@ -116,7 +123,9 @@ def enter_state(fsm, new_state):
         return
 
     if new_state == STATE_PHOTO_CAPTURE:
-        fsm.api.set_light("green", pattern="solid")
+        fsm.state_data["flash_until"] = time.monotonic() + 3.0
+        fsm.api.set_light("white", pattern="blink", duration_s=3.0)
+        log_event("api", "Photo capture countdown started: blinking light for 3 seconds.", throttle_seconds=0.0)
 
 
 def _compute_vertical_fix_target(state_data):

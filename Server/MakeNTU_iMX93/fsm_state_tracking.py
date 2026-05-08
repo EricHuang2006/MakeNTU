@@ -4,7 +4,6 @@ from config import LOG_NOW_ANGLE, SCAN_SETTLE_SECONDS
 from event_logger import log_event
 from fsm_output import build_motor_command
 from fsm_states import (
-    SCAN_PAN_ANGLES,
     STATE_FAILURE,
     STATE_HORIZONTAL_FIX,
     STATE_PHOTO_CAPTURE,
@@ -17,10 +16,10 @@ from tracking_geometry import (
     compute_top_edge_face_target_tilt,
     extract_body_targets,
     extract_face_targets,
-    get_leftmost_target,
-    has_target_on_right_side,
-    leftmost_target_has_left_frame,
+    get_rightmost_target,
+    has_target_on_left_side,
     register_unique_angles,
+    rightmost_target_has_right_frame,
     select_centered_body_target,
     select_centered_face_target,
     select_top_edge_face_target,
@@ -28,6 +27,7 @@ from tracking_geometry import (
 
 
 def update_horizontal_sweep(fsm, context):
+    scan_angles = fsm.state_data["scan_angles"]
     target_pan = fsm.state_data["target_pan"]
 
     if not angles_reached(fsm.current_angles["pan"], target_pan):
@@ -100,11 +100,11 @@ def update_horizontal_sweep(fsm, context):
     )
 
     for angle in new_angles:
-        if fsm.state_data["leftmost_angle"] is None:
-            fsm.state_data["leftmost_angle"] = angle
+        if fsm.state_data["rightmost_angle"] is None:
+            fsm.state_data["rightmost_angle"] = angle
             log_event(
                 "angle",
-                f"Recorded initial leftmost angle={angle:.1f}",
+                f"Recorded initial rightmost angle={angle:.1f}",
                 throttle_seconds=0.0,
             )
         log_event(
@@ -115,16 +115,16 @@ def update_horizontal_sweep(fsm, context):
         )
 
     if (
-        fsm.state_data["left_exit_seen"] and
-        has_target_on_right_side(body_targets, context["IMG_SIZE"])
+        fsm.state_data["right_exit_seen"] and
+        has_target_on_left_side(body_targets, context["IMG_SIZE"])
     ):
         leave_angle = fsm.state_data["leave_angle"]
         leave_angle_text = f"{leave_angle:.1f}" if leave_angle is not None else "None"
         log_event(
             "error",
             (
-                "Leftmost person already left frame and a person is still visible on the right side. "
-                f"leftmost_angle={fsm.state_data['leftmost_angle']:.1f}, "
+                "Rightmost person already left frame and a person is still visible on the left side. "
+                f"rightmost_angle={fsm.state_data['rightmost_angle']:.1f}, "
                 f"leave_angle={leave_angle_text}, "
                 f"now_angle={fsm.current_angles['pan']:.1f}"
             ),
@@ -133,28 +133,28 @@ def update_horizontal_sweep(fsm, context):
         fsm.switch_state(STATE_FAILURE)
         return fsm.last_command
 
-    leftmost_target = get_leftmost_target(body_targets)
+    rightmost_target = get_rightmost_target(body_targets)
     if (
-        leftmost_target is not None and
-        not fsm.state_data["left_exit_seen"] and
-        fsm.state_data["leftmost_angle"] is not None and
-        fsm.current_angles["pan"] > fsm.state_data["leftmost_angle"] and
-        leftmost_target_has_left_frame(body_targets)
+        rightmost_target is not None and
+        not fsm.state_data["right_exit_seen"] and
+        fsm.state_data["rightmost_angle"] is not None and
+        fsm.current_angles["pan"] > fsm.state_data["rightmost_angle"] and
+        rightmost_target_has_right_frame(body_targets, context["IMG_SIZE"])
     ):
-        fsm.state_data["left_exit_seen"] = True
+        fsm.state_data["right_exit_seen"] = True
         fsm.state_data["leave_angle"] = fsm.current_angles["pan"]
         log_event(
             "angle",
             (
-                "Leftmost target reached frame edge; "
-                f"leftmost_angle={fsm.state_data['leftmost_angle']:.1f}, "
+                "Rightmost target reached frame edge; "
+                f"rightmost_angle={fsm.state_data['rightmost_angle']:.1f}, "
                 f"leave_angle={fsm.state_data['leave_angle']:.1f}, "
                 f"now_angle={fsm.current_angles['pan']:.1f}"
             ),
             throttle_seconds=0.0,
         )
 
-    if fsm.state_data["scan_index"] >= len(SCAN_PAN_ANGLES) - 1:
+    if fsm.state_data["scan_index"] >= len(scan_angles) - 1:
         if fsm.state_data["recorded_angles"]:
             fsm.switch_state(STATE_HORIZONTAL_FIX)
         else:
@@ -163,8 +163,8 @@ def update_horizontal_sweep(fsm, context):
         return fsm.last_command
 
     fsm.state_data["scan_index"] += 1
-    fsm.state_data["target_pan"] = float(SCAN_PAN_ANGLES[fsm.state_data["scan_index"]])
-    fsm.state_data["settle_until"] = time.monotonic() + SCAN_SETTLE_SECONDS
+    fsm.state_data["target_pan"] = float(scan_angles[fsm.state_data["scan_index"]])
+    fsm.state_data["settle_until"] = 0.0
     fsm.debug_problems = [
         f"HORIZONTAL_SWEEP: recorded={len(fsm.state_data['recorded_angles'])}"
     ]

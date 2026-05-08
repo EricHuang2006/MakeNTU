@@ -4,6 +4,7 @@ import time
 
 from config import MOTOR_I2C_ADDRESS, MOTOR_I2C_BUS, PAN_MAX_DELTA, TILT_MAX_DELTA
 from event_logger import log_event
+from tracking_geometry import ANGLE_EPSILON
 
 
 I2C_SLAVE = 0x0703
@@ -204,9 +205,9 @@ class CameraServoRig:
         self.current["tilt"] = safe_angle
 
     def set_angles(self, pan=None, tilt=None, height=None):
-        if pan is not None:
+        if pan is not None and abs(float(pan) - float(self.current["pan"])) > ANGLE_EPSILON:
             self.pan(pan)
-        if tilt is not None:
+        if tilt is not None and abs(float(tilt) - float(self.current["tilt"])) > ANGLE_EPSILON:
             self.tilt(tilt)
         if height is not None:
             self.current["height"] = max(0.0, min(180.0, float(height)))

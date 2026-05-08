@@ -10,8 +10,12 @@ STATE_VERTICAL_FIX = "VERTICAL_FIX"
 STATE_FAILURE = "FAILURE"
 STATE_PHOTO_CAPTURE = "PHOTO_CAPTURE"
 
-SCAN_PAN_ANGLES = list(range(0, 181, SCAN_STEP_DEGREES))
 FAILURE_TIMEOUT_SECONDS = 5.0
+
+
+def build_horizontal_scan_angles():
+    step = max(1, int(round(SCAN_STEP_DEGREES)))
+    return [float(angle) for angle in range(0, 181, step)]
 
 
 def build_vertical_scan_angles(center_tilt):

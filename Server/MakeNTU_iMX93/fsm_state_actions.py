@@ -21,7 +21,17 @@ def update_failure(fsm, _context):
 
 
 def update_photo_capture(fsm, context):
+    if time.monotonic() < fsm.state_data.get("flash_until", 0.0):
+        fsm.debug_problems = ["PHOTO_CAPTURE: blinking light countdown before capture"]
+        return build_motor_command(
+            fsm.current_angles["pan"],
+            fsm.current_angles["tilt"],
+            fsm.current_angles["height"],
+            "PHOTO_CAPTURE: blinking light countdown before capture",
+        )
+
     if not fsm.state_data.get("captured", False):
+        fsm.api.set_light("green", pattern="solid")
         log_event("api", "Taking photo.", throttle_seconds=0.0)
         photo = fsm.api.take_photo(context["frame"])
         uploaded = fsm.api.upload_photo(photo, context.get("DISCORD_WEBHOOK_URL"))
