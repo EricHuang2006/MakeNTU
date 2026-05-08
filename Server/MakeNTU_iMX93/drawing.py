@@ -148,67 +148,15 @@ def draw_face_boxes(display_img, face_boxes):
         )
 
 
-def draw_group_box(display_img, framing, photo_good):
-    """
-    Draw group framing box and group center.
-    """
-
-    if framing["group_box"] is None:
-        return
-
-    gx1, gy1, gx2, gy2 = framing["group_box"]
-    gcx, gcy = framing["group_center"]
-
-    group_color = (0, 255, 0) if photo_good else (0, 0, 255)
-
-    cv2.rectangle(
-        display_img,
-        (sx(gx1), sy(gy1)),
-        (sx(gx2), sy(gy2)),
-        group_color,
-        2
-    )
-
-    cv2.circle(
-        display_img,
-        (sx(gcx), sy(gcy)),
-        5,
-        group_color,
-        -1
-    )
-
-
-def draw_hold_timer(display_img, hold_elapsed):
-    """
-    Draw raised-hand hold timer.
-    """
-
-    if hold_elapsed is None:
-        return
-
-    cv2.putText(
-        display_img,
-        f"Hold: {hold_elapsed:.1f}s",
-        (12, 170),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.65,
-        (0, 0, 255),
-        1,
-        cv2.LINE_AA
-    )
-
-
 def draw_debug_view(
     img,
     indices,
     all_keypoints,
     face_boxes,
-    framing,
     photo_good,
     quality_score,
     quality_problems,
     adjustment,
-    hold_elapsed=None,
 ):
     """
     Main drawing function.
@@ -224,7 +172,6 @@ def draw_debug_view(
 
     draw_skeletons(display_img, indices, all_keypoints)
     draw_face_boxes(display_img, face_boxes)
-    draw_group_box(display_img, framing, photo_good)
 
     draw_status_panel(
         display_img,
@@ -233,7 +180,5 @@ def draw_debug_view(
         quality_problems,
         adjustment
     )
-
-    draw_hold_timer(display_img, hold_elapsed)
 
     return display_img

@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from tflite_runtime.interpreter import Interpreter, load_delegate
+from event_logger import log_event
 
 
 def load_pose_model(model_path):
@@ -15,10 +16,10 @@ def load_pose_model(model_path):
             model_path=model_path,
             experimental_delegates=npu_delegate
         )
-        print("NPU Acceleration enabled.")
+        log_event("system", "NPU acceleration enabled.", throttle_seconds=0.0)
 
     except Exception as e:
-        print(f"NPU Delegate failed, using CPU: {e}")
+        log_event("error", f"NPU delegate failed, using CPU: {e}", throttle_seconds=0.0)
         interpreter = Interpreter(model_path=model_path)
 
     interpreter.allocate_tensors()

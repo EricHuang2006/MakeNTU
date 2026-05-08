@@ -3,260 +3,226 @@ import serial
 import socket
 import struct
 import time
-import requests
 
-from config import *
+from config import (
+    BAUD_RATE,
+    CONF_THRESHOLD,
+    DISCORD_WEBHOOK_URL,
+    HOST_IP,
+    IMG_SIZE,
+    MODEL_PATH,
+    NMS_THRESHOLD,
+    PORT,
+    UART_PORT,
+)
+from drawing import draw_debug_view
+from event_logger import log_event, log_once_per_change
+from motor_control import CameraServoRig
+from pose_logic import analyze_people
+from status import CameraRigFSM
 from vision import (
+    apply_nms,
+    decode_pose_output,
     load_pose_model,
     preprocess_frame,
     run_inference,
-    decode_pose_output,
-    apply_nms,
 )
-from photo_quality import evaluate_photo_quality
-from camera_adjustment import compute_camera_adjustment
-from drawing import draw_debug_view
-from pose_logic import analyze_people, GestureModeSwitcher, MODE_FULL_BODY
-from motor_control import (
-    CameraServoRig,
-    compute_camera_target_angles,
-)
-from DC_sender import send_frame_to_discord
+from fsm_states import STATE_FAILURE, STATE_HORIZONTAL_SWEEP
 
-
-# ==========================================
-# 1. Hardware & Network Initialization
-# ==========================================
-try:
-    ser = serial.Serial(UART_PORT, BAUD_RATE, timeout=1)
-    print(f"UART initialized on {UART_PORT}")
-
-except Exception as e:
-    print(f"UART Error: {e}. Running without UART.")
-    ser = None
-
-
-interpreter, model_info = load_pose_model(MODEL_PATH)
-
-
-server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server_socket.bind((HOST_IP, PORT))
-server_socket.listen(1)
-
-print(f"Waiting for PC connection on port {PORT}...")
-client_socket, addr = server_socket.accept()
-print(f"PC Connected from: {addr}")
-
-
-# ==========================================
-# 2. Runtime State
-# ==========================================
-gesture_start_time = 0
 SIMULATE_MOTOR_OUTPUT = True
-motor_rig = CameraServoRig()
-mode_switcher = GestureModeSwitcher()
-pose_mode = MODE_FULL_BODY
 
 
-DEFAULT_FRAMING = {
-    "people_count": 0,
-    "center_error_x": 0,
-    "vertical_error": 0,
-    "group_box": None,
-    "group_center": None,
-    "target_y": 0,
-    "width_ratio": 0,
-    "height_ratio": 0,
-    "face_visibility_ratio": 0,
-}
+def initialize_uart():
+    try:
+        device = serial.Serial(UART_PORT, BAUD_RATE, timeout=1)
+        log_event("system", f"UART initialized on {UART_PORT}", throttle_seconds=0.0)
+        return device
+    except Exception as exc:
+        log_event("error", f"UART unavailable: {exc}. Running without UART.", throttle_seconds=0.0)
+        return None
 
 
-# ==========================================
-# 3. Main Loop
-# ==========================================
-cap = cv2.VideoCapture(0)
+def initialize_socket():
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind((HOST_IP, PORT))
+    server_socket.listen(1)
+    server_socket.settimeout(0.01)
+    log_event("system", f"PC stream server listening on port {PORT}", throttle_seconds=0.0)
+    return server_socket
 
-try:
-    while cap.isOpened():
-        ret, frame = cap.read()
 
-        if not ret:
-            break
+def accept_client_if_needed(server_socket, client_socket):
+    if client_socket is not None:
+        return client_socket
 
-        # ==========================================
-        # A. Vision pipeline
-        # ==========================================
-        input_data, img = preprocess_frame(
-            frame,
-            model_info,
-            IMG_SIZE
+    try:
+        client_socket, addr = server_socket.accept()
+        client_socket.settimeout(1.0)
+        log_event("system", f"PC connected from {addr}", throttle_seconds=0.0)
+        return client_socket
+    except socket.timeout:
+        return None
+
+
+def stream_frame(client_socket, display_img):
+    if client_socket is None:
+        return None
+
+    ok, encoded_img = cv2.imencode(
+        ".jpg",
+        display_img,
+        [int(cv2.IMWRITE_JPEG_QUALITY), 80],
+    )
+    if not ok:
+        log_event("error", "JPEG encoding failed.", throttle_seconds=0.0)
+        return client_socket
+
+    try:
+        payload = encoded_img.tobytes()
+        size = struct.pack("Q", len(payload))
+        client_socket.sendall(size + payload)
+        return client_socket
+    except OSError as exc:
+        log_event("error", f"PC stream disconnected: {exc}", throttle_seconds=0.0)
+        client_socket.close()
+        return None
+
+
+def apply_motor_output(motor_rig, motor_command):
+    if motor_rig.enabled and not SIMULATE_MOTOR_OUTPUT:
+        motor_rig.set_angles(
+            pan=motor_command["pan_angle"],
+            tilt=motor_command["tilt_angle"],
+            height=motor_command["height_angle"],
         )
+        return
 
-        output_data = run_inference(
-            interpreter,
-            model_info,
-            input_data
-        )
 
-        boxes, scores, all_keypoints = decode_pose_output(
-            output_data,
-            model_info,
-            IMG_SIZE,
-            CONF_THRESHOLD
-        )
+def main():
+    uart_device = initialize_uart()
+    interpreter, model_info = load_pose_model(MODEL_PATH)
+    log_event("system", "Pose model loaded.", throttle_seconds=0.0)
+    server_socket = initialize_socket()
+    client_socket = None
 
-        indices = apply_nms(
-            boxes,
-            scores,
-            CONF_THRESHOLD,
-            NMS_THRESHOLD
-        )
+    motor_rig = CameraServoRig()
+    fsm = CameraRigFSM(motor_rig)
+    fsm.init()
 
-        # ==========================================
-        # B. Pose logic
-        # ==========================================
-        pose_result = analyze_people(
-            indices=indices,
-            scores=scores,
-            all_keypoints=all_keypoints,
-            img_size=IMG_SIZE,
-            keypoint_conf=0.3,
-        )
+    cap = None
+    frame_counter = 0
 
-        face_boxes = pose_result["face_boxes"]
-        any_hand_raised = pose_result["any_hand_raised"]
+    try:
+        cap = cv2.VideoCapture(0)
+        if not cap.isOpened():
+            raise RuntimeError("Failed to open camera.")
+        log_event("system", "Camera opened successfully.", throttle_seconds=0.0)
 
-        pose_mode, switched = mode_switcher.update(any_hand_raised)
-        if switched:
-            print(f"Gesture detected, switched camera mode to: {pose_mode}")
+        while cap.isOpened():
+            client_socket = accept_client_if_needed(server_socket, client_socket)
 
-        # ==========================================
-        # C. Photo quality
-        # ==========================================
-        photo_good = False
-        quality_score = 0
-        quality_problems = ["No person detected"]
-        framing = DEFAULT_FRAMING.copy()
+            ret, frame = cap.read()
+            if not ret:
+                log_event("error", "Camera read failed; stopping main loop.", throttle_seconds=0.0)
+                break
 
-        if len(indices) > 0:
-            photo_good, quality_score, quality_problems, framing = evaluate_photo_quality(
-                indices,
-                boxes,
-                all_keypoints,
-                IMG_SIZE
-            )
+            img = cv2.resize(frame, (IMG_SIZE, IMG_SIZE))
+            boxes = []
+            scores = []
+            all_keypoints = []
+            indices = []
+            face_boxes = []
 
-        motor_adjustment = compute_camera_target_angles(
-            framing,
-            pose_mode,
-            IMG_SIZE,
-        )
+            if fsm.state != STATE_FAILURE:
+                input_data, img = preprocess_frame(frame, model_info, IMG_SIZE)
+                output_data = run_inference(interpreter, model_info, input_data)
+                boxes, scores, all_keypoints = decode_pose_output(
+                    output_data,
+                    model_info,
+                    IMG_SIZE,
+                    CONF_THRESHOLD,
+                )
+                indices = apply_nms(boxes, scores, CONF_THRESHOLD, NMS_THRESHOLD)
 
-        if motor_rig.enabled and not SIMULATE_MOTOR_OUTPUT:
-            motor_rig.set_angles(
-                pan=motor_adjustment["pan_angle"],
-                tilt=motor_adjustment["tilt_angle"],
-                height=motor_adjustment["height_angle"],
-            )
-        else:
-            print(
-                f"[Motor OUTPUT] mode={pose_mode} "
-                f"pan={motor_adjustment['pan_angle']:.1f} "
-                f"tilt={motor_adjustment['tilt_angle']:.1f} "
-                f"height={motor_adjustment['height_angle']:.1f}"
-            )
-
-        # ==========================================
-        # D. Camera adjustment recommendation
-        # ==========================================
-        adjustment = compute_camera_adjustment(
-            framing,
-            IMG_SIZE
-        )
-        adjustment["summary"] = motor_adjustment["summary"]
-
-        print(
-            "Quality:", quality_score,
-            "| Good:", photo_good,
-            "| Problems:", quality_problems,
-            "| Adjustment:", adjustment["summary"]
-        )
-
-        # ==========================================
-        # E. Raised-hand timer / photo trigger
-        # ==========================================
-        hold_elapsed_for_display = None
-
-        if any_hand_raised:
-            if gesture_start_time == 0:
-                gesture_start_time = time.time()
-                hold_elapsed_for_display = 0.0
-                print("偵測到舉手！開始計時...")
-
+                pose_result = analyze_people(
+                    indices=indices,
+                    scores=scores,
+                    all_keypoints=all_keypoints,
+                    img_size=IMG_SIZE,
+                    keypoint_conf=0.3,
+                )
+                face_boxes = pose_result["face_boxes"]
             else:
-                elapsed = time.time() - gesture_start_time
-                hold_elapsed_for_display = elapsed
-                print(f"elapsed time: {elapsed:.2f}")
+                log_once_per_change(
+                    "state",
+                    "failure_detection_paused",
+                    "paused",
+                    "FAILURE state active: detection and stream output paused.",
+                )
 
-                if elapsed >= 5.0:
-                    print("觸發拍照！正在傳送至 Discord...")
-                    send_frame_to_discord(frame, DISCORD_WEBHOOK_URL)
-                    gesture_start_time = 0
-                    hold_elapsed_for_display = None
-                    time.sleep(1.5)
+            frame_counter += 1
+            if fsm.state != STATE_HORIZONTAL_SWEEP and fsm.state != STATE_FAILURE:
+                log_once_per_change(
+                    "detect",
+                    "people_detected_count",
+                    len(indices),
+                    f"Detected {len(indices)} skeleton target(s).",
+                )
+                log_once_per_change(
+                    "detect",
+                    "faces_detected_count",
+                    len(face_boxes),
+                    f"Detected {len(face_boxes)} face target(s).",
+                )
 
-        else:
-            if gesture_start_time != 0:
-                print("手已放下，計時中斷。")
+            context = {
+                "frame": frame,
+                "img": img,
+                "boxes": boxes,
+                "scores": scores,
+                "all_keypoints": all_keypoints,
+                "indices": indices,
+                "face_boxes": face_boxes,
+                "IMG_SIZE": IMG_SIZE,
+                "DISCORD_WEBHOOK_URL": DISCORD_WEBHOOK_URL,
+                "frame_counter": frame_counter,
+            }
 
-            gesture_start_time = 0
+            motor_command = fsm.update(context)
+            apply_motor_output(motor_rig, motor_command)
 
-        # ==========================================
-        # F. Draw debug view
-        # ==========================================
-        display_img = draw_debug_view(
-            img=img,
-            indices=indices,
-            all_keypoints=all_keypoints,
-            face_boxes=face_boxes,
-            framing=framing,
-            photo_good=photo_good,
-            quality_score=quality_score,
-            quality_problems=quality_problems,
-            adjustment=adjustment,
-            hold_elapsed=hold_elapsed_for_display,
-        )
+            debug_view = fsm.get_debug_view(indices)
+            display_face_boxes = face_boxes if fsm.state != STATE_HORIZONTAL_SWEEP else []
+            display_img = draw_debug_view(
+                img=img,
+                indices=indices,
+                all_keypoints=all_keypoints,
+                face_boxes=display_face_boxes,
+                photo_good=debug_view["photo_good"],
+                quality_score=debug_view["quality_score"],
+                quality_problems=debug_view["quality_problems"],
+                adjustment=debug_view["adjustment"],
+            )
+            if fsm.state != STATE_FAILURE:
+                client_socket = stream_frame(client_socket, display_img)
 
-        # ==========================================
-        # G. Encode and stream to laptop
-        # ==========================================
-        ret, encoded_img = cv2.imencode(
-            ".jpg",
-            display_img,
-            [int(cv2.IMWRITE_JPEG_QUALITY), 80]
-        )
+    except Exception as exc:
+        log_event("error", f"Main loop stopped: {exc}", throttle_seconds=0.0)
 
-        if not ret:
-            print("JPEG encoding failed.")
-            continue
+    finally:
+        fsm.deinit()
+        if cap is not None:
+            cap.release()
 
-        data = encoded_img.tobytes()
+        if uart_device:
+            uart_device.close()
 
-        size = struct.pack("Q", len(data))
-        client_socket.sendall(size + data)
-
-
-except Exception as e:
-    print(f"Stream stopped: {e}")
+        motor_rig.shutdown()
+        if client_socket is not None:
+            client_socket.close()
+        server_socket.close()
+        log_event("system", "Server shut down cleanly.", throttle_seconds=0.0)
 
 
-finally:
-    cap.release()
-
-    if ser:
-        ser.close()
-
-    client_socket.close()
-    server_socket.close()
-
-    print("Server shut down cleanly.")
+if __name__ == "__main__":
+    main()

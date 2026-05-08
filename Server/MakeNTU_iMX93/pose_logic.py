@@ -1,29 +1,5 @@
 import numpy as np
 
-MODE_FULL_BODY = 'full_body'
-MODE_HALF_BODY = 'half_body'
-
-
-class GestureModeSwitcher:
-    def __init__(self, initial_mode=MODE_FULL_BODY):
-        self.current_mode = initial_mode
-        self.raise_active = False
-
-    def update(self, any_hand_raised):
-        if any_hand_raised and not self.raise_active:
-            self.current_mode = (
-                MODE_HALF_BODY
-                if self.current_mode == MODE_FULL_BODY
-                else MODE_FULL_BODY
-            )
-            self.raise_active = True
-            return self.current_mode, True
-
-        if not any_hand_raised and self.raise_active:
-            self.raise_active = False
-
-        return self.current_mode, False
-
 
 def estimate_face_box(kpts, conf, img_size, keypoint_conf=0.3):
     """
@@ -61,61 +37,16 @@ def estimate_face_box(kpts, conf, img_size, keypoint_conf=0.3):
     return fx1, fy1, fx2, fy2, conf
 
 
-def is_hand_raised(kpts, keypoint_conf=0.3):
-    """
-    Raised-hand rule:
-        If either wrist is above the nose, count as hand raised.
-
-    COCO keypoints:
-        0 = nose
-        9 = left wrist
-        10 = right wrist
-    """
-
-    nose = kpts[0]
-    left_wrist = kpts[9]
-    right_wrist = kpts[10]
-
-    if nose[2] <= keypoint_conf:
-        return False
-
-    left_hand_up = (
-        left_wrist[2] > keypoint_conf and
-        left_wrist[1] < nose[1]
-    )
-
-    right_hand_up = (
-        right_wrist[2] > keypoint_conf and
-        right_wrist[1] < nose[1]
-    )
-
-    return left_hand_up or right_hand_up
-
-
 def analyze_people(indices, scores, all_keypoints, img_size, keypoint_conf=0.3):
     """
-    Analyze final NMS people.
-
-    Computes:
-        face_boxes
-        any_hand_raised
-        target_nose_x for temporary motor tracking
-
-    Returns:
-        result dict
+    Analyze final NMS people and return face boxes for display/FSM use.
     """
 
     face_boxes = []
-    any_hand_raised = False
-
-    best_conf = -1.0
-    target_nose_x = -1
 
     if len(indices) == 0:
         return {
             "face_boxes": face_boxes,
-            "any_hand_raised": False,
-            "target_nose_x": -1,
         }
 
     for i in indices:
@@ -135,41 +66,6 @@ def analyze_people(indices, scores, all_keypoints, img_size, keypoint_conf=0.3):
         if face_box is not None:
             face_boxes.append(face_box)
 
-        # Hand raise
-        if is_hand_raised(kpts, keypoint_conf):
-            any_hand_raised = True
-
-        # Temporary motor target: clearest visible nose
-        nose_x, nose_y, nose_conf = kpts[0]
-
-        if conf > best_conf and nose_conf > keypoint_conf:
-            best_conf = conf
-            target_nose_x = nose_x
-
     return {
         "face_boxes": face_boxes,
-        "any_hand_raised": any_hand_raised,
-        "target_nose_x": target_nose_x,
     }
-
-
-def compute_temporary_pan_angle(target_nose_x, img_size, camera_fov):
-    """
-    Temporary old motor logic:
-        Use nose X position to calculate one pan angle.
-
-    Later, replace this with camera_adjustment-based control.
-    """
-
-    if target_nose_x == -1:
-        return None
-
-    offset_pixel = target_nose_x - (img_size / 2)
-
-    degree_offset = (
-        offset_pixel / (img_size / 2)
-    ) * (camera_fov / 2)
-
-    target_angle = int(np.clip(90 + degree_offset, 0, 180))
-
-    return target_angle
