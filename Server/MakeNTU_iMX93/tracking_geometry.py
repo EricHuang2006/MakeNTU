@@ -1,10 +1,10 @@
 import math
 
-from config import CAMERA_CY, CAMERA_FY
+from config import CAMERA_CY, CAMERA_FY, SCAN_STEP_DEGREES
 
 
 ANGLE_EPSILON = 0.75
-PERSON_MATCH_ANGLE_DEG = 4.0
+PERSON_MATCH_ANGLE_DEG = max(0.75, float(SCAN_STEP_DEGREES) * 0.75)
 EDGE_MARGIN_PX = 8
 EDGE_EXIT_CENTER_MARGIN_PX = 32
 BODY_CENTER_TOLERANCE_PX = 6
@@ -59,16 +59,35 @@ def count_visible_keypoints(keypoints, keypoint_conf=BODY_KEYPOINT_CONFIDENCE):
     return sum(1 for _x, _y, conf in keypoints if conf > keypoint_conf)
 
 
+def _keypoint_mid_x(keypoints, left_idx, right_idx, keypoint_conf=BODY_KEYPOINT_CONFIDENCE):
+    left = keypoints[left_idx]
+    right = keypoints[right_idx]
+    if left[2] > keypoint_conf and right[2] > keypoint_conf:
+        return (left[0] + right[0]) / 2.0
+    return None
+
+
+def compute_body_center_x(keypoints, box, keypoint_conf=BODY_KEYPOINT_CONFIDENCE):
+    for left_idx, right_idx in ((5, 6), (11, 12), (1, 2), (3, 4)):
+        mid_x = _keypoint_mid_x(keypoints, left_idx, right_idx, keypoint_conf)
+        if mid_x is not None:
+            return mid_x
+
+    x, _y, w, _h = box
+    return x + (w / 2.0)
+
+
 def extract_body_targets(indices, boxes, all_keypoints, img_size, current_pan):
     targets = []
 
     for idx in normalize_indices(indices):
-        visible_keypoints = count_visible_keypoints(all_keypoints[idx])
+        keypoints = all_keypoints[idx]
+        visible_keypoints = count_visible_keypoints(keypoints)
         if visible_keypoints < BODY_VISIBLE_MIN_KEYPOINTS:
             continue
 
         x, y, w, h = boxes[idx]
-        center_x = x + (w / 2.0)
+        center_x = compute_body_center_x(keypoints, boxes[idx])
         targets.append(
             {
                 "center_x": center_x,
@@ -178,6 +197,16 @@ def has_target_on_left_side(targets, img_size):
 
     frame_center_x = img_size / 2.0
     return any(target["center_x"] <= frame_center_x for target in targets)
+
+
+def has_target_in_left_entry_zone(targets):
+    if not targets:
+        return False
+
+    return any(
+        target["center_x"] <= EDGE_EXIT_CENTER_MARGIN_PX or target["left_x"] <= EDGE_MARGIN_PX
+        for target in targets
+    )
 
 
 def get_rightmost_target(targets):

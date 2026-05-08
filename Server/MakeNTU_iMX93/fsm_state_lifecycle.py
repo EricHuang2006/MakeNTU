@@ -26,6 +26,7 @@ def build_state_data(previous_state_data, current_angles, state):
             "scan_angles": scan_angles,
             "recorded_angles": [],
             "right_exit_seen": False,
+            "left_entry_clear_seen_after_exit": False,
             "rightmost_angle": None,
             "leave_angle": None,
             "target_pan": float(scan_angles[0]),

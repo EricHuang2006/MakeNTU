@@ -16,8 +16,8 @@ from tracking_geometry import (
     compute_top_edge_face_target_tilt,
     extract_body_targets,
     extract_face_targets,
+    has_target_in_left_entry_zone,
     get_rightmost_target,
-    has_target_on_left_side,
     register_unique_angles,
     rightmost_target_has_right_frame,
     select_centered_body_target,
@@ -114,16 +114,29 @@ def update_horizontal_sweep(fsm, context):
             throttle_seconds=0.0,
         )
 
+    if fsm.state_data["right_exit_seen"] and not fsm.state_data["left_entry_clear_seen_after_exit"]:
+        if not has_target_in_left_entry_zone(body_targets):
+            fsm.state_data["left_entry_clear_seen_after_exit"] = True
+            log_event(
+                "angle",
+                (
+                    "Left entry zone cleared after rightmost leave; "
+                    "future left-edge arrivals will be treated as new entrants."
+                ),
+                throttle_seconds=0.0,
+            )
+
     if (
         fsm.state_data["right_exit_seen"] and
-        has_target_on_left_side(body_targets, context["IMG_SIZE"])
+        fsm.state_data["left_entry_clear_seen_after_exit"] and
+        has_target_in_left_entry_zone(body_targets)
     ):
         leave_angle = fsm.state_data["leave_angle"]
         leave_angle_text = f"{leave_angle:.1f}" if leave_angle is not None else "None"
         log_event(
             "error",
             (
-                "Rightmost person already left frame and a person is still visible on the left side. "
+                "A new person entered from the left after a previous person already left the frame. "
                 f"rightmost_angle={fsm.state_data['rightmost_angle']:.1f}, "
                 f"leave_angle={leave_angle_text}, "
                 f"now_angle={fsm.current_angles['pan']:.1f}"
