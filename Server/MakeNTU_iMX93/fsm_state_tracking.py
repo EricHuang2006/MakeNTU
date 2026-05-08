@@ -1,6 +1,6 @@
 import time
 
-from config import HORIZONTAL_SCAN_SETTLE_SECONDS, LOG_NOW_ANGLE
+from config import LOG_NOW_ANGLE, SCAN_SETTLE_SECONDS
 from event_logger import log_event
 from fsm_output import build_motor_command
 from fsm_states import (
@@ -22,6 +22,7 @@ from tracking_geometry import (
     leftmost_target_has_left_frame,
     register_unique_angles,
     select_centered_body_target,
+    select_centered_face_target,
 )
 
 
@@ -38,7 +39,7 @@ def update_horizontal_sweep(fsm, context):
 
     if not fsm.state_data["sweep_started"]:
         fsm.state_data["sweep_started"] = True
-        fsm.state_data["settle_until"] = time.monotonic() + HORIZONTAL_SCAN_SETTLE_SECONDS
+        fsm.state_data["settle_until"] = time.monotonic() + SCAN_SETTLE_SECONDS
         log_event("state", "Horizontal sweep reached 0 degrees. Starting person detection sweep.", throttle_seconds=0.0)
         return build_motor_command(
             target_pan,
@@ -162,7 +163,7 @@ def update_horizontal_sweep(fsm, context):
 
     fsm.state_data["scan_index"] += 1
     fsm.state_data["target_pan"] = float(SCAN_PAN_ANGLES[fsm.state_data["scan_index"]])
-    fsm.state_data["settle_until"] = time.monotonic() + HORIZONTAL_SCAN_SETTLE_SECONDS
+    fsm.state_data["settle_until"] = time.monotonic() + SCAN_SETTLE_SECONDS
     fsm.debug_problems = [
         f"HORIZONTAL_SWEEP: recorded={len(fsm.state_data['recorded_angles'])}"
     ]
@@ -200,6 +201,23 @@ def update_vertical_sweep(fsm, context):
             f"VERTICAL_SWEEP: moving to tilt={target_tilt:.1f}",
         )
 
+    if fsm.state_data["settle_until"] == 0.0:
+        fsm.state_data["settle_until"] = time.monotonic() + SCAN_SETTLE_SECONDS
+        return build_motor_command(
+            fsm.current_angles["pan"],
+            target_tilt,
+            fsm.current_angles["height"],
+            f"VERTICAL_SWEEP: settle at tilt={target_tilt:.1f}",
+        )
+
+    if time.monotonic() < fsm.state_data["settle_until"]:
+        return build_motor_command(
+            fsm.current_angles["pan"],
+            target_tilt,
+            fsm.current_angles["height"],
+            f"VERTICAL_SWEEP: waiting at tilt={target_tilt:.1f}",
+        )
+
     face_targets = extract_face_targets(
         context["face_boxes"],
         context["IMG_SIZE"],
@@ -213,21 +231,32 @@ def update_vertical_sweep(fsm, context):
             throttle_key="vertical_sweep_detect",
         )
 
-    new_angles = register_unique_angles(
-        fsm.state_data["recorded_angles"],
-        [target["centered_angle"] for target in face_targets],
-    )
+    centered_face_target = select_centered_face_target(face_targets, context["IMG_SIZE"])
+    candidate_angles = []
+
+    if centered_face_target is not None:
+        candidate_angles = [centered_face_target["centered_angle"]]
+        log_event(
+            "detect",
+            (
+                "Face center aligned with frame center "
+                f"at tilt={fsm.current_angles['tilt']:.1f}"
+            ),
+            throttle_key="vertical_center_hit",
+        )
+
+    new_angles = register_unique_angles(fsm.state_data["recorded_angles"], candidate_angles)
 
     for angle in new_angles:
         log_event(
-            "detect",
+            "angle",
             f"Appended vertical target angle={angle:.1f}",
             throttle_key=f"append_vertical_{angle:.1f}",
             throttle_seconds=0.0,
         )
 
-    if face_targets:
-        fsm.state_data["snapshot_targets"] = face_targets
+    if centered_face_target is not None:
+        fsm.state_data["snapshot_targets"] = [centered_face_target]
 
     if fsm.state_data["scan_index"] >= len(SCAN_TILT_ANGLES) - 1:
         if fsm.state_data["recorded_angles"]:
@@ -239,6 +268,7 @@ def update_vertical_sweep(fsm, context):
 
     fsm.state_data["scan_index"] += 1
     fsm.state_data["target_tilt"] = float(SCAN_TILT_ANGLES[fsm.state_data["scan_index"]])
+    fsm.state_data["settle_until"] = time.monotonic() + SCAN_SETTLE_SECONDS
     fsm.debug_problems = [
         f"VERTICAL_SWEEP: recorded={len(fsm.state_data['recorded_angles'])} new={len(new_angles)}"
     ]

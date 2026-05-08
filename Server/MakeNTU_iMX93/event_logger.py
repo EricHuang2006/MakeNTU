@@ -6,6 +6,7 @@ from config import (
     LOG_DETECTION_EVENTS,
     LOG_ENABLED,
     LOG_ERROR_EVENTS,
+    LOG_MOTOR_EVENTS,
     LOG_STATE_EVENTS,
     LOG_THROTTLE_SECONDS,
 )
@@ -19,6 +20,7 @@ _CATEGORY_ENABLED = {
     "angle": LOG_ANGLE_EVENTS,
     "api": LOG_API_EVENTS,
     "error": LOG_ERROR_EVENTS,
+    "motor": LOG_MOTOR_EVENTS,
     "system": True,
 }
 

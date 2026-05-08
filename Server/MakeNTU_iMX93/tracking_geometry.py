@@ -1,53 +1,14 @@
-import math
-
-from config import CAMERA_CX, CAMERA_CY, CAMERA_FX, CAMERA_FY
-
-
 ANGLE_EPSILON = 0.75
 PERSON_MATCH_ANGLE_DEG = 4.0
 EDGE_MARGIN_PX = 8
 BODY_CENTER_TOLERANCE_PX = 6
+FACE_CENTER_TOLERANCE_PX = 6
 BODY_VISIBLE_MIN_KEYPOINTS = 5
 BODY_KEYPOINT_CONFIDENCE = 0.3
 
 
 def clamp_angle(angle):
     return max(0.0, min(180.0, float(angle)))
-
-
-def _scale_x(pixel_x, img_size):
-    raw_image_width = CAMERA_CX * 2.0
-    return (pixel_x / float(img_size)) * raw_image_width
-
-
-def _scale_y(pixel_y, img_size):
-    raw_image_height = CAMERA_CY * 2.0
-    return (pixel_y / float(img_size)) * raw_image_height
-
-
-def pixel_x_to_angle(pixel_x, img_size):
-    dx = _scale_x(pixel_x, img_size) - CAMERA_CX
-    return math.degrees(math.atan(dx / CAMERA_FX))
-
-
-def pixel_y_to_angle(pixel_y, img_size):
-    dy = _scale_y(pixel_y, img_size) - CAMERA_CY
-    return math.degrees(math.atan(dy / CAMERA_FY))
-
-
-def compute_centered_pan_angle(current_pan, center_x, img_size):
-    return clamp_angle(current_pan + pixel_x_to_angle(center_x, img_size))
-
-
-def compute_centered_tilt_angle(current_tilt, center_y, img_size):
-    return clamp_angle(current_tilt + pixel_y_to_angle(center_y, img_size))
-
-
-def compute_top_third_tilt_angle(centered_tilt_angle, desired_ratio, img_size):
-    frame_center_y = img_size * 0.5
-    target_y = img_size * desired_ratio
-    shift = pixel_y_to_angle(frame_center_y, img_size) - pixel_y_to_angle(target_y, img_size)
-    return clamp_angle(centered_tilt_angle + shift)
 
 
 def normalize_indices(indices):
@@ -76,13 +37,12 @@ def extract_body_targets(indices, boxes, all_keypoints, img_size, current_pan):
 
         x, y, w, h = boxes[idx]
         center_x = x + (w / 2.0)
-        centered_angle = compute_centered_pan_angle(current_pan, center_x, img_size)
         targets.append(
             {
                 "center_x": center_x,
                 "left_x": x,
                 "right_x": x + w,
-                "centered_angle": centered_angle,
+                "centered_angle": clamp_angle(current_pan),
                 "visible_keypoints": visible_keypoints,
             }
         )
@@ -115,17 +75,35 @@ def extract_face_targets(face_boxes, img_size, current_tilt):
     for face_box in face_boxes:
         fx1, fy1, fx2, fy2, _conf = face_box
         center_y = (fy1 + fy2) / 2.0
-        centered_angle = compute_centered_tilt_angle(current_tilt, center_y, img_size)
         targets.append(
             {
                 "top_y": fy1,
                 "bottom_y": fy2,
                 "center_y": center_y,
-                "centered_angle": centered_angle,
+                "centered_angle": clamp_angle(current_tilt),
             }
         )
 
     return targets
+
+
+def select_centered_face_target(targets, img_size, tolerance_px=FACE_CENTER_TOLERANCE_PX):
+    if not targets:
+        return None
+
+    frame_center_y = img_size / 2.0
+    centered_targets = []
+
+    for target in targets:
+        center_offset = abs(target["center_y"] - frame_center_y)
+        if center_offset <= tolerance_px:
+            centered_targets.append((center_offset, target))
+
+    if not centered_targets:
+        return None
+
+    centered_targets.sort(key=lambda item: item[0])
+    return centered_targets[0][1]
 
 
 def register_unique_angles(existing_angles, candidate_angles, threshold_deg=PERSON_MATCH_ANGLE_DEG):

@@ -8,6 +8,7 @@ from config import (
     BAUD_RATE,
     CONF_THRESHOLD,
     DISCORD_WEBHOOK_URL,
+    ENABLE_MOTOR_OUTPUT,
     HOST_IP,
     IMG_SIZE,
     MODEL_PATH,
@@ -28,8 +29,6 @@ from vision import (
     run_inference,
 )
 from fsm_states import STATE_FAILURE, STATE_HORIZONTAL_SWEEP
-
-SIMULATE_MOTOR_OUTPUT = True
 
 
 def initialize_uart():
@@ -89,13 +88,55 @@ def stream_frame(client_socket, display_img):
 
 
 def apply_motor_output(motor_rig, motor_command):
-    if motor_rig.enabled and not SIMULATE_MOTOR_OUTPUT:
-        motor_rig.set_angles(
-            pan=motor_command["pan_angle"],
-            tilt=motor_command["tilt_angle"],
-            height=motor_command["height_angle"],
+    command_signature = (
+        round(float(motor_command["pan_angle"]), 1),
+        round(float(motor_command["tilt_angle"]), 1),
+        round(float(motor_command["height_angle"]), 1),
+    )
+
+    if not motor_rig.enabled:
+        log_once_per_change(
+            "error",
+            "motor_rig_disabled",
+            "disabled",
+            "Motor rig is disabled; commands are not being sent to hardware.",
         )
         return
+
+    if not ENABLE_MOTOR_OUTPUT:
+        log_once_per_change(
+            "motor",
+            "motor_output_simulated",
+            command_signature,
+            (
+                "Motor output disabled by config; "
+                f"simulated command pan={command_signature[0]:.1f}, "
+                f"tilt={command_signature[1]:.1f}, "
+                f"height={command_signature[2]:.1f}"
+            ),
+        )
+        return
+
+    motor_rig.set_angles(
+        pan=motor_command["pan_angle"],
+        tilt=motor_command["tilt_angle"],
+        height=motor_command["height_angle"],
+    )
+    actual_signature = (
+        round(float(motor_rig.current["pan"]), 1),
+        round(float(motor_rig.current["tilt"]), 1),
+        round(float(motor_rig.current["height"]), 1),
+    )
+    log_once_per_change(
+        "motor",
+        "motor_output_sent",
+        actual_signature,
+        (
+            f"Motor command sent pan={actual_signature[0]:.1f}, "
+            f"tilt={actual_signature[1]:.1f}, "
+            f"height={actual_signature[2]:.1f}"
+        ),
+    )
 
 
 def main():
@@ -106,6 +147,17 @@ def main():
     client_socket = None
 
     motor_rig = CameraServoRig()
+    if motor_rig.enabled:
+        log_event(
+            "motor",
+            (
+                "Motor rig ready at "
+                f"pan={motor_rig.current['pan']:.1f}, "
+                f"tilt={motor_rig.current['tilt']:.1f}, "
+                f"height={motor_rig.current['height']:.1f}"
+            ),
+            throttle_seconds=0.0,
+        )
     fsm = CameraRigFSM(motor_rig)
     fsm.init()
 

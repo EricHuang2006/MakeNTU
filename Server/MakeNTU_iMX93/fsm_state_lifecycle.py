@@ -1,9 +1,5 @@
 import time
 
-from config import (
-    HORIZONTAL_SCAN_SETTLE_SECONDS,
-    IMG_SIZE,
-)
 from event_logger import log_event
 from fsm_output import build_motor_command
 from fsm_states import (
@@ -19,7 +15,7 @@ from fsm_states import (
     STATE_VERTICAL_FIX,
     STATE_VERTICAL_SWEEP,
 )
-from tracking_geometry import compute_top_third_tilt_angle, highest_face_near_top
+from tracking_geometry import clamp_angle
 
 
 def build_state_data(previous_state_data, current_angles, state):
@@ -45,6 +41,7 @@ def build_state_data(previous_state_data, current_angles, state):
             "recorded_angles": [],
             "snapshot_targets": [],
             "target_tilt": float(SCAN_TILT_ANGLES[0]),
+            "settle_until": 0.0,
         }
     if state == STATE_VERTICAL_FIX:
         return {
@@ -121,10 +118,4 @@ def enter_state(fsm, new_state):
 def _compute_vertical_fix_target(state_data):
     lowest_angle = min(state_data["recorded_angles"])
     highest_angle = max(state_data["recorded_angles"])
-    midpoint = (lowest_angle + highest_angle) / 2.0
-    desired_ratio = 1.0 / 3.0
-
-    if highest_face_near_top(state_data["snapshot_targets"], IMG_SIZE):
-        desired_ratio = 0.40
-
-    return compute_top_third_tilt_angle(midpoint, desired_ratio, IMG_SIZE)
+    return clamp_angle((lowest_angle + highest_angle) / 2.0)

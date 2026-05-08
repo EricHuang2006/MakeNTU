@@ -2,7 +2,7 @@ import fcntl
 import os
 import time
 
-from config import MOTOR_I2C_ADDRESS, MOTOR_I2C_BUS
+from config import MOTOR_I2C_ADDRESS, MOTOR_I2C_BUS, PAN_MAX_DELTA, TILT_MAX_DELTA
 from event_logger import log_event
 
 
@@ -15,10 +15,6 @@ DEFAULT_PAN_ANGLE = 85.0
 DEFAULT_TILT_ANGLE = 94.0
 DEFAULT_TILT_PAIR_ANGLE = 81.0
 DEFAULT_HEIGHT_ANGLE = 90.0
-
-PAN_MAX_DELTA = 85.0
-TILT_MAX_DELTA = 45.0
-
 
 class PCA9685:
     def __init__(self, bus=0, address=0x40, init_50hz=True):
@@ -154,6 +150,16 @@ class CameraServoRig:
             return
         for servo in self.servos:
             servo.set_angle(servo.center)
+        log_event(
+            "motor",
+            (
+                "Motor reset_all applied "
+                f"pan={self.pan1.center:.1f}, "
+                f"tilt={self.tilt1.center:.1f}, "
+                f"tilt_pair={self.tilt2.center:.1f}"
+            ),
+            throttle_seconds=0.0,
+        )
 
     def center(self):
         if not self.enabled:
@@ -168,6 +174,13 @@ class CameraServoRig:
         if not self.enabled:
             return
         safe_angle = self._clamp_relative_angle(self.pan1, angle, PAN_MAX_DELTA)
+        if safe_angle != angle:
+            log_event(
+                "motor",
+                f"Pan command clamped from {float(angle):.1f} to {safe_angle:.1f}",
+                throttle_key=f"pan_clamp_{safe_angle:.1f}",
+                throttle_seconds=0.0,
+            )
         self.pan1.set_angle(safe_angle)
         self.current["pan"] = safe_angle
 
@@ -175,6 +188,13 @@ class CameraServoRig:
         if not self.enabled:
             return
         safe_angle = self._clamp_relative_angle(self.tilt1, angle, TILT_MAX_DELTA)
+        if safe_angle != angle:
+            log_event(
+                "motor",
+                f"Tilt command clamped from {float(angle):.1f} to {safe_angle:.1f}",
+                throttle_key=f"tilt_clamp_{safe_angle:.1f}",
+                throttle_seconds=0.0,
+            )
         delta = safe_angle - self.tilt1.center
         op = 0.9 if delta > 0 else 1.1
         self.tilt1.set_angle(safe_angle)
