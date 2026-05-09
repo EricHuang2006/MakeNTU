@@ -20,9 +20,8 @@ from config import (
 )
 from drawing import draw_debug_view
 from event_logger import log_event, log_once_per_change
-from hand_sign_classifier import HandSignClassifier
 from motor_control import CameraServoRig
-from pose_logic import analyze_people, classify_manual_gesture
+from pose_logic import analyze_people, classify_manual_gesture, classify_mode_selection_gesture
 from stepper_axis_control import StepperAxisController
 from status import CameraRigFSM
 from vision import (
@@ -35,8 +34,10 @@ from vision import (
 from fsm_states import (
     STATE_FAILURE,
     STATE_HORIZONTAL_SWEEP,
+    STATE_MANUAL_CONTROL,
     STATE_MODE_SELECT,
     STATE_PHOTO_CAPTURE,
+    STATE_SETTING,
     STATE_VERTICAL_FIX,
     STATE_VERTICAL_SWEEP,
 )
@@ -161,7 +162,6 @@ def main():
     cap = None
     client_socket = None
     server_socket = None
-    hand_sign_classifier = None
     cli_model_input = None
     uart_device = initialize_uart()
 
@@ -194,7 +194,6 @@ def main():
     try:
         interpreter, model_info = load_pose_model(MODEL_PATH)
         log_event("system", "Pose model loaded.", throttle_seconds=0.0)
-        hand_sign_classifier = HandSignClassifier()
         cli_model_input = CliModelInput()
         server_socket = initialize_socket()
 
@@ -221,9 +220,7 @@ def main():
             manual_gesture = None
             cli_inputs = cli_model_input.pop_frame_inputs() if cli_model_input is not None else {}
 
-            if fsm.state == STATE_MODE_SELECT:
-                hand_sign = hand_sign_classifier.classify(frame) if hand_sign_classifier is not None else None
-            elif fsm.state != STATE_FAILURE:
+            if fsm.state not in (STATE_FAILURE, STATE_SETTING):
                 input_data, img = preprocess_frame(frame, model_info, IMG_SIZE)
                 output_data = run_inference(interpreter, model_info, input_data)
                 boxes, scores, all_keypoints = decode_pose_output(
@@ -242,19 +239,46 @@ def main():
                     keypoint_conf=0.3,
                 )
                 face_boxes = pose_result["face_boxes"]
-                if ENABLE_POSE_MANUAL_GESTURES:
+                if fsm.state == STATE_MODE_SELECT:
+                    hand_sign = classify_mode_selection_gesture(
+                        indices=indices,
+                        all_keypoints=all_keypoints,
+                        keypoint_conf=0.3,
+                    )
+                    log_once_per_change(
+                        "detect",
+                        "mode_select_pose_gesture",
+                        hand_sign or "none",
+                        f"Mode-select pose gesture detected: {hand_sign or 'none'}.",
+                    )
+                elif ENABLE_POSE_MANUAL_GESTURES or fsm.state == STATE_MANUAL_CONTROL:
                     manual_gesture = classify_manual_gesture(
                         indices=indices,
                         all_keypoints=all_keypoints,
                         keypoint_conf=0.3,
                     )
+                    if fsm.state == STATE_MANUAL_CONTROL:
+                        log_once_per_change(
+                            "detect",
+                            "manual_cv_gesture",
+                            manual_gesture or "none",
+                            f"Manual CV gesture detected: {manual_gesture or 'none'}.",
+                        )
             else:
-                log_once_per_change(
-                    "state",
-                    "failure_detection_paused",
-                    "paused",
-                    "FAILURE state active: detection and stream output paused.",
-                )
+                if fsm.state == STATE_FAILURE:
+                    log_once_per_change(
+                        "state",
+                        "failure_detection_paused",
+                        "paused",
+                        "FAILURE state active: detection and stream output paused.",
+                    )
+                elif fsm.state == STATE_SETTING:
+                    log_once_per_change(
+                        "state",
+                        "setting_detection_paused",
+                        "paused",
+                        "SETTING state active: pose inference paused until ready blink completes.",
+                    )
 
             hand_sign = cli_inputs.get("hand_sign", hand_sign)
             manual_gesture = cli_inputs.get("manual_gesture", manual_gesture)
@@ -325,8 +349,6 @@ def main():
 
         if uart_device:
             uart_device.close()
-        if hand_sign_classifier is not None:
-            hand_sign_classifier.close()
         if cli_model_input is not None:
             cli_model_input.close()
 

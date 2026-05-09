@@ -9,7 +9,7 @@
     - left arm horizontally raised to the left : pan the camera to the left by 4 degrees.
     - right arm horizontally raised to the right : pan the camera to the right by 4 degrees.
     - left arm horizontal up to the elbow and forearm perpendicular to the ground, upwards(left up lock) : tilt up by 4 degrees
-    - right arm horizontal up to the elbow and forearm perpendicular to the ground, downwards(left down lock) : tilt down by 4 degrees
+    - left arm horizontal up to the elbow and forearm perpendicular to the ground, downwards(left down lock) : tilt down by 4 degrees
     - right arm up lock : adjust height upward by 1cm
     - right arm down lock : adjust height downward by 1cm
     - raise (any) hand straight up : finished adjusting, entering photo taking stage.

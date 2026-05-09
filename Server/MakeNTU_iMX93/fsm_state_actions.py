@@ -8,6 +8,7 @@ from fsm_states import (
     STATE_HORIZONTAL_FIX,
     STATE_HORIZONTAL_SWEEP,
     STATE_MODE_SELECT,
+    STATE_SETTING,
     STATE_STEPPER_POSITION,
     STATE_VERTICAL_FIX,
     STATE_VERTICAL_SWEEP,
@@ -154,10 +155,10 @@ def _skip_current_photo(fsm, sequence, failed_adjustment=None):
     sequence["active"] = False
     log_event(
         "state",
-        "Final auto sequence height failed. Returning to MODE_SELECT.",
+        "Final auto sequence height failed. Returning to SETTING.",
         throttle_seconds=0.0,
     )
-    fsm.switch_state(STATE_MODE_SELECT)
+    fsm.switch_state(STATE_SETTING)
 
 
 def _ensure_recovery_data_for_photo(sequence, index):
@@ -242,6 +243,14 @@ def update_photo_capture(fsm, context):
 
     fsm.api.set_light("blue", pattern="solid")
     sequence = getattr(fsm, "auto_sequence", {})
+    if getattr(fsm, "control_mode", None) == "manual":
+        sequence["active"] = False
+        sequence["photo_index"] = 1
+        sequence["photo_count"] = 1
+        log_event("state", "Manual one-shot photo completed. Returning to MODE_SELECT.", throttle_seconds=0.0)
+        fsm.switch_state(STATE_MODE_SELECT)
+        return fsm.last_command
+
     if sequence.get("active"):
         completed_index = int(sequence.get("photo_index", 0))
         sequence["last_photo_successful"] = True
@@ -268,7 +277,9 @@ def update_photo_capture(fsm, context):
             return fsm.last_command
 
         sequence["active"] = False
-        log_event("state", "Auto capture sequence completed.", throttle_seconds=0.0)
+        log_event("state", "Auto capture sequence completed. Returning to SETTING.", throttle_seconds=0.0)
+        fsm.switch_state(STATE_SETTING)
+        return fsm.last_command
 
     fsm.switch_state(STATE_MODE_SELECT)
     return fsm.last_command

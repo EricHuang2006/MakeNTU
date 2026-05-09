@@ -35,6 +35,8 @@ def build_state_data(previous_state_data, current_angles, state, fsm=None):
     if state == STATE_SETTING:
         return {
             "reset_done": False,
+            "mode_select_ready_at": 0.0,
+            "ready_blink_started": False,
         }
     if state == STATE_MODE_SELECT:
         return {}
@@ -46,6 +48,7 @@ def build_state_data(previous_state_data, current_angles, state, fsm=None):
             "target_pan": current_angles["pan"],
             "target_tilt": current_angles["tilt"],
             "gesture_ready_at": 0.0,
+            "manual_photo_requested": False,
         }
     if state == STATE_HORIZONTAL_SWEEP:
         center_pan = current_angles["pan"]
@@ -147,6 +150,9 @@ def enter_state(fsm, new_state):
         return
 
     if new_state == STATE_MANUAL_CONTROL:
+        fsm.auto_sequence["active"] = False
+        fsm.auto_sequence["photo_index"] = 0
+        fsm.auto_sequence["photo_count"] = 1
         fsm.api.set_light("blue", pattern="solid")
         if hasattr(fsm.motor_rig, "center"):
             fsm.motor_rig.center()

@@ -29,10 +29,29 @@ from fsm_states import (
 from tracking_geometry import clamp_angle
 
 
+SETTING_READY_BLINK_COUNT = 2
+SETTING_READY_BLINK_INTERVAL_SECONDS = 0.5
+SETTING_READY_BLINK_DURATION_SECONDS = 2.0
+MANUAL_FRAME_VISIBLE_RATIO_MIN = 0.5
+MANUAL_FRAME_WARNING_BLINK_SECONDS = 0.8
+MANUAL_FRAME_WARNING_BLINK_INTERVAL_SECONDS = 0.15
+MANUAL_FRAME_WARNING_REPEAT_SECONDS = 0.8
+MANUAL_FRAME_WARNING_TOLERANCE_FRAMES = 3
+
+
 def update_setting(fsm, context):
     if fsm.state_data.get("reset_done", False):
-        fsm.switch_state(STATE_MODE_SELECT)
-        return fsm.last_command
+        if time.monotonic() >= fsm.state_data.get("mode_select_ready_at", 0.0):
+            fsm.switch_state(STATE_MODE_SELECT)
+            return fsm.last_command
+
+        fsm.debug_problems = ["SETTING: ready blink before mode selection"]
+        return build_motor_command(
+            fsm.default_angles["pan"],
+            fsm.default_angles["tilt"],
+            fsm.current_angles["height"],
+            "SETTING: yellow ready blink before mode selection",
+        )
 
     try:
         log_event(
@@ -77,6 +96,16 @@ def update_setting(fsm, context):
         result = home_bottom()
         fsm.state_data["reset_done"] = True
         fsm.stepper_position_cm = 0.0
+        fsm.state_data["ready_blink_started"] = True
+        fsm.state_data["mode_select_ready_at"] = (
+            time.monotonic() + SETTING_READY_BLINK_DURATION_SECONDS
+        )
+        fsm.api.set_light(
+            "yellow",
+            pattern="blink",
+            duration_s=SETTING_READY_BLINK_DURATION_SECONDS,
+            blink_interval_s=SETTING_READY_BLINK_INTERVAL_SECONDS,
+        )
         log_event(
             "state",
             (
@@ -84,7 +113,8 @@ def update_setting(fsm, context):
                 f"(pan={fsm.current_angles['pan']:.1f}, "
                 f"tilt={fsm.current_angles['tilt']:.1f}, "
                 f"home_steps={result.get('home_steps', 0)}, "
-                f"backoff_steps={result.get('backoff_steps', 0)})."
+                f"backoff_steps={result.get('backoff_steps', 0)}). "
+                f"Blinking yellow {SETTING_READY_BLINK_COUNT} times before mode selection."
             ),
             throttle_seconds=0.0,
         )
@@ -171,8 +201,21 @@ def update_manual_control(fsm, context):
     height = fsm.current_angles["height"]
     gesture = context.get("manual_gesture")
     now = time.monotonic()
+    frame_warning = _update_manual_frame_warning(fsm, context, now)
 
     if gesture == "finish":
+        if fsm.state_data.get("manual_photo_requested", False):
+            fsm.debug_problems = ["MANUAL_CONTROL: manual photo already requested"]
+            return build_motor_command(
+                pan,
+                tilt,
+                height,
+                "MANUAL_CONTROL: waiting for one-shot manual photo capture",
+            )
+        fsm.auto_sequence["active"] = False
+        fsm.auto_sequence["photo_index"] = 0
+        fsm.auto_sequence["photo_count"] = 1
+        fsm.state_data["manual_photo_requested"] = True
         log_event("state", "Manual control finished by raised hand; taking photo.", throttle_seconds=0.0)
         fsm.switch_state(STATE_PHOTO_CAPTURE)
         return fsm.last_command
@@ -193,13 +236,131 @@ def update_manual_control(fsm, context):
             throttle_seconds=0.0,
         )
 
-    fsm.debug_problems = [f"MANUAL_CONTROL gesture={gesture or 'none'}"]
+    if frame_warning:
+        fsm.debug_problems = [f"MANUAL_CONTROL warning={frame_warning}", f"gesture={gesture or 'none'}"]
+    else:
+        fsm.debug_problems = [f"MANUAL_CONTROL gesture={gesture or 'none'}"]
     return build_motor_command(
         pan,
         tilt,
         height,
         "MANUAL_CONTROL: gesture control active",
     )
+
+
+def _update_manual_frame_warning(fsm, context, now):
+    warning = _manual_frame_warning(context)
+    raw_warning_active = warning is not None
+    if raw_warning_active:
+        warning_count = int(fsm.state_data.get("frame_warning_count", 0)) + 1
+    else:
+        warning_count = 0
+
+    fsm.state_data["frame_warning_count"] = warning_count
+    warning_active = warning_count >= MANUAL_FRAME_WARNING_TOLERANCE_FRAMES
+    previous_warning = fsm.state_data.get("frame_warning_active", False)
+
+    if warning_active:
+        if (
+            not previous_warning or
+            now >= fsm.state_data.get("next_frame_warning_blink_at", 0.0)
+        ):
+            fsm.api.set_light(
+                "red",
+                pattern="blink",
+                duration_s=MANUAL_FRAME_WARNING_BLINK_SECONDS,
+                blink_interval_s=MANUAL_FRAME_WARNING_BLINK_INTERVAL_SECONDS,
+            )
+            fsm.state_data["next_frame_warning_blink_at"] = (
+                now + MANUAL_FRAME_WARNING_REPEAT_SECONDS
+            )
+            log_event(
+                "state",
+                (
+                    f"Manual frame warning: {warning}; "
+                    f"count={warning_count}; blinking red light."
+                ),
+                throttle_seconds=0.0,
+            )
+    elif previous_warning:
+        fsm.api.set_light("blue", pattern="solid")
+        fsm.state_data["next_frame_warning_blink_at"] = 0.0
+        log_event("state", "Manual frame warning cleared; returning light to blue.", throttle_seconds=0.0)
+
+    fsm.state_data["frame_warning_active"] = warning_active
+    fsm.state_data["frame_warning_reason"] = warning if warning_active else None
+    return warning if warning_active else None
+
+
+def _manual_frame_warning(context):
+    indices = context.get("indices")
+    if indices is None:
+        indices = []
+    if len(indices) == 0:
+        return "target_lost"
+
+    boxes = context.get("boxes")
+    scores = context.get("scores")
+    if boxes is None:
+        boxes = []
+    if scores is None:
+        scores = []
+    img_size = int(context.get("IMG_SIZE", 0) or 0)
+    if img_size <= 0:
+        return None
+
+    box = _select_best_manual_box(indices, boxes, scores)
+    if box is None:
+        return "target_lost"
+
+    visible_ratio = _box_visible_ratio(box, img_size)
+    if visible_ratio < MANUAL_FRAME_VISIBLE_RATIO_MIN:
+        return f"target_half_out visible={visible_ratio:.2f}"
+
+    return None
+
+
+def _select_best_manual_box(indices, boxes, scores):
+    best_box = None
+    best_score = -1.0
+
+    for index_ref in indices:
+        idx = index_ref[0] if hasattr(index_ref, "__len__") else index_ref
+        try:
+            idx = int(idx)
+            box = boxes[idx]
+        except (TypeError, ValueError, IndexError):
+            continue
+
+        score = 0.0
+        try:
+            score = float(scores[idx])
+        except (TypeError, ValueError, IndexError):
+            pass
+
+        if best_box is None or score > best_score:
+            best_box = box
+            best_score = score
+
+    return best_box
+
+
+def _box_visible_ratio(box, img_size):
+    x, y, width, height = [float(value) for value in box]
+    if width <= 0.0 or height <= 0.0:
+        return 0.0
+
+    x1 = x
+    y1 = y
+    x2 = x + width
+    y2 = y + height
+    visible_x1 = max(0.0, min(float(img_size), x1))
+    visible_y1 = max(0.0, min(float(img_size), y1))
+    visible_x2 = max(0.0, min(float(img_size), x2))
+    visible_y2 = max(0.0, min(float(img_size), y2))
+    visible_width = max(0.0, visible_x2 - visible_x1)
+    visible_height = max(0.0, visible_y2 - visible_y1)
+    return (visible_width * visible_height) / (width * height)
 
 
 def _start_auto_sequence(fsm, mode, horizontal_scan_delta):
@@ -244,9 +405,9 @@ def _apply_manual_servo_gesture(pan, tilt, gesture):
     elif gesture == "pan_right":
         pan = clamp_angle(float(pan) + float(MANUAL_PAN_STEP_DEGREES))
     elif gesture == "tilt_up":
-        tilt = clamp_angle(float(tilt) + float(MANUAL_TILT_STEP_DEGREES))
-    elif gesture == "tilt_down":
         tilt = clamp_angle(float(tilt) - float(MANUAL_TILT_STEP_DEGREES))
+    elif gesture == "tilt_down":
+        tilt = clamp_angle(float(tilt) + float(MANUAL_TILT_STEP_DEGREES))
     return pan, tilt
 
 
