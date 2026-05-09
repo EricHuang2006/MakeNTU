@@ -8,7 +8,9 @@ import time
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.abspath(os.path.join(CURRENT_DIR, "..", "..", "MakeNTU_iMX93"))
 if APP_DIR not in sys.path:
-    sys.path.insert(0, APP_DIR)
+    sys.path.append(APP_DIR)
+if CURRENT_DIR not in sys.path:
+    sys.path.insert(0, CURRENT_DIR)
 
 from stepper_a4988_api import A4988Axis  # noqa: E402
 
@@ -87,30 +89,6 @@ def run_switch_stop_test(test_steps, direction):
         raise RuntimeError("Stepper did not stop on the switch during the bounded stop test")
 
 
-def run_switch_stop_only_test(test_steps, direction):
-    print("\n[only-switch-stop] Bounded move until bottom switch is pressed")
-    print(f"direction={direction}, max_steps={test_steps}")
-    wait_for_enter(
-        "Release the switch. The stepper will move toward the switch and stop when pressed."
-    )
-
-    if axis.bottom_switch_pressed():
-        print("Switch is already pressed; no movement needed.")
-        return 0
-
-    moved = axis.move_steps(test_steps, direction, stop_on_bottom_switch=True)
-    pressed = axis.bottom_switch_pressed()
-    print(f"finished: moved_steps={moved}, switch_pressed={pressed}")
-
-    if not pressed:
-        raise RuntimeError(
-            "Switch was not pressed before the step limit. "
-            "Check direction, switch line, wiring, and active-low/active-high setting."
-        )
-
-    return moved
-
-
 def run_until_switch_test(max_cm, direction, progress_interval_steps):
     max_steps = axis.cm_to_steps(max_cm)
     print("\n[until-switch] Continuous bounded move toward bottom switch")
@@ -163,8 +141,6 @@ def run_home_test():
         "home result: "
         f"homed={result['homed']} "
         f"steps={result['steps']} "
-        f"home_steps={result.get('home_steps', 0)} "
-        f"backoff_steps={result.get('backoff_steps', 0)} "
         f"position_cm={result['position_cm']:.2f} "
         f"switch_pressed={result['bottom_switch_pressed']}"
     )
@@ -182,16 +158,14 @@ def parse_args():
     parser.add_argument("--bottom-switch-active-low", action="store_true", default=True)
     parser.add_argument("--bottom-switch-active-high", dest="bottom_switch_active_low", action="store_false")
     parser.add_argument("--steps-per-cm", type=float, default=1000.0)
-    parser.add_argument("--up-direction", type=int, choices=(0, 1), default=0)
-    parser.add_argument("--home-direction", type=int, choices=(0, 1), default=1)
+    parser.add_argument("--up-direction", type=int, choices=(0, 1), default=1)
+    parser.add_argument("--home-direction", type=int, choices=(0, 1), default=0)
     parser.add_argument("--max-home-cm", type=float, default=2.0)
-    parser.add_argument("--home-backoff-steps", type=int, default=200)
     parser.add_argument("--tiny-steps", type=int, default=50)
     parser.add_argument("--stop-test-steps", type=int, default=2000)
     parser.add_argument("--until-switch", action="store_true")
     parser.add_argument("--until-switch-max-cm", type=float, default=2.0)
     parser.add_argument("--progress-interval-steps", type=int, default=100)
-    parser.add_argument("--only-switch-stop", action="store_true")
     parser.add_argument("--skip-motion", action="store_true")
     parser.add_argument("--skip-home", action="store_true")
     parser.add_argument("--monitor-switch", action="store_true")
@@ -216,7 +190,6 @@ def main():
         up_direction=args.up_direction,
         home_direction=args.home_direction,
         max_home_cm=args.max_home_cm,
-        home_backoff_steps=args.home_backoff_steps,
     )
 
     print("Stepper + micro switch sanity test")
@@ -240,11 +213,6 @@ def main():
                 args.home_direction,
                 args.progress_interval_steps,
             )
-            print("\nPASS: stepper stopped when the bottom switch was pressed.")
-            return
-
-        if args.only_switch_stop:
-            run_switch_stop_only_test(args.stop_test_steps, args.home_direction)
             print("\nPASS: stepper stopped when the bottom switch was pressed.")
             return
 

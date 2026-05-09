@@ -4,6 +4,7 @@ from config import STEPPER_PHOTO_COUNT, STEPPER_ROD_LENGTH_CM
 from event_logger import log_event
 from fsm_output import build_motor_command
 from fsm_states import (
+    STATE_FAILURE,
     STATE_AUTO_CONTROL,
     STATE_HORIZONTAL_SWEEP,
     STATE_STEPPER_POSITION,
@@ -48,6 +49,8 @@ def update_auto_control(fsm, context):
             "photo_index": 0,
             "photo_count": photo_count,
             "step_cm": float(STEPPER_ROD_LENGTH_CM) / max(1, photo_count),
+            "retry_used": False,
+            "abort_on_failure": False,
         }
         log_event(
             "state",
@@ -91,7 +94,8 @@ def update_stepper_position(fsm, context):
                 "motor",
                 (
                     "Stepper positioned for photo 1/"
-                    f"{total}: homed bottom, steps={result.get('steps', 0)}."
+                    f"{total}: homed bottom, home_steps={result.get('home_steps', 0)}, "
+                    f"backoff_steps={result.get('backoff_steps', 0)}."
                 ),
                 throttle_seconds=0.0,
             )
@@ -115,7 +119,9 @@ def update_stepper_position(fsm, context):
             )
     except Exception as exc:
         log_event("error", f"Stepper positioning failed: {exc}", throttle_seconds=0.0)
-        raise
+        fsm.auto_sequence["abort_on_failure"] = True
+        fsm.switch_state(STATE_FAILURE)
+        return fsm.last_command
 
     fsm.state_data["position_started"] = True
     next_state = STATE_HORIZONTAL_SWEEP if index == 0 else STATE_VERTICAL_SWEEP

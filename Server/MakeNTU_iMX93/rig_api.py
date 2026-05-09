@@ -2,6 +2,7 @@ import time
 
 from DC_sender import send_frame_to_discord
 from event_logger import log_event
+from led_control import RgbLedController
 
 
 class DummyRigApi:
@@ -9,6 +10,7 @@ class DummyRigApi:
         self.capture_requested = False
         self.manual_mode_requested = False
         self.auto_mode_requested = False
+        self.led = RgbLedController()
 
     def request_capture(self):
         self.capture_requested = True
@@ -35,6 +37,7 @@ class DummyRigApi:
         return requested
 
     def set_light(self, color, pattern="solid", duration_s=0.0):
+        self.led.set_light(color, pattern=pattern, duration_s=duration_s)
         log_event(
             "api",
             f"Light set to color={color}, pattern={pattern}, duration={duration_s:.1f}s",
@@ -52,3 +55,6 @@ class DummyRigApi:
     def upload_photo(self, frame, webhook_url):
         log_event("api", "Uploading photo to Discord.", throttle_seconds=0.0)
         return send_frame_to_discord(frame, webhook_url)
+
+    def close(self):
+        self.led.close()

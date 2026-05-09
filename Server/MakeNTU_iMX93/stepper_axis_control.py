@@ -5,6 +5,7 @@ from config import (
     STEPPER_DIR_LINE,
     STEPPER_GPIOCHIP,
     STEPPER_HOME_DIRECTION,
+    STEPPER_HOME_BACKOFF_STEPS,
     STEPPER_MAX_HOME_CM,
     STEPPER_STEP_HIGH_TIME,
     STEPPER_STEP_LINE,
@@ -40,6 +41,7 @@ class StepperAxisController:
                 up_direction=STEPPER_UP_DIRECTION,
                 home_direction=STEPPER_HOME_DIRECTION,
                 max_home_cm=STEPPER_MAX_HOME_CM,
+                home_backoff_steps=STEPPER_HOME_BACKOFF_STEPS,
             )
             self.enabled = True
             log_event("system", "StepperAxisController initialized.", throttle_seconds=0.0)
@@ -55,6 +57,8 @@ class StepperAxisController:
                 "enabled": False,
                 "homed": True,
                 "steps": 0,
+                "home_steps": 0,
+                "backoff_steps": 0,
                 "position_cm": self.position_cm,
             }
 
@@ -64,7 +68,11 @@ class StepperAxisController:
         result["enabled"] = True
         log_event(
             "motor",
-            f"Stepper homed to bottom in {result['steps']} step(s).",
+            (
+                f"Stepper homed: home_steps={result.get('home_steps', 0)}, "
+                f"backoff_steps={result.get('backoff_steps', 0)}, "
+                f"position={self.position_cm:.2f}cm."
+            ),
             throttle_seconds=0.0,
         )
         return result

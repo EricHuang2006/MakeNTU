@@ -77,6 +77,8 @@ class CameraRigFSM:
             "photo_index": 0,
             "photo_count": 3,
             "step_cm": 7.0,
+            "retry_used": False,
+            "abort_on_failure": False,
         }
 
     def init(self):
@@ -95,6 +97,8 @@ class CameraRigFSM:
             return
 
         self.api.set_light("off")
+        if hasattr(self.api, "close"):
+            self.api.close()
         self.last_command = build_motor_command(
             self.default_angles["pan"],
             self.default_angles["tilt"],

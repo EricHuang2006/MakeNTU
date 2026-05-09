@@ -37,7 +37,7 @@ class StepDirAxisNoSwitch:
         step_line=2,
         dir_line=3,
         steps_per_cm=1000.0,
-        up_direction=1,
+        up_direction=0,
         step_high_time=0.0005,
         step_low_time=0.0010,
     ):
@@ -184,7 +184,7 @@ def parse_args():
     parser.add_argument("--steps-per-cm", type=float, default=1000.0)
     parser.add_argument("--rod-length-cm", type=float, default=21.0)
     parser.add_argument("--photo-count", type=int, default=3)
-    parser.add_argument("--up-direction", type=int, choices=(0, 1), default=1)
+    parser.add_argument("--up-direction", type=int, choices=(0, 1), default=0)
     parser.add_argument("--step-high-time", type=float, default=0.0005)
     parser.add_argument("--step-low-time", type=float, default=0.0010)
     parser.add_argument("--pause-s", type=float, default=0.5)

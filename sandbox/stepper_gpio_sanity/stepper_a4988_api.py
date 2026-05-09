@@ -40,10 +40,9 @@ class A4988Axis:
         step_high_time=0.0005,
         step_low_time=0.0010,
         steps_per_cm=1000.0,
-        up_direction=0,
-        home_direction=1,
+        up_direction=1,
+        home_direction=0,
         max_home_cm=24.0,
-        home_backoff_steps=200,
     ):
         if steps_per_cm <= 0:
             raise ValueError("steps_per_cm must be greater than 0")
@@ -59,7 +58,6 @@ class A4988Axis:
         self.up_direction = 1 if int(up_direction) else 0
         self.home_direction = 1 if int(home_direction) else 0
         self.max_home_cm = float(max_home_cm)
-        self.home_backoff_steps = int(round(abs(home_backoff_steps)))
         self.position_cm = 0.0
         self.homed = False
 
@@ -194,9 +192,9 @@ class A4988Axis:
     def home_bottom(self):
         max_steps = self.cm_to_steps(self.max_home_cm)
         if self.bottom_switch_pressed():
-            home_steps = 0
+            moved = 0
         else:
-            home_steps = self.move_steps(
+            moved = self.move_steps(
                 max_steps,
                 self.home_direction,
                 stop_on_bottom_switch=True,
@@ -206,17 +204,12 @@ class A4988Axis:
         if not pressed:
             raise RuntimeError("Bottom micro switch was not reached during homing")
 
-        backoff_direction = 1 - self.home_direction
-        backoff_steps = self.move_steps(self.home_backoff_steps, backoff_direction)
         self.position_cm = 0.0
         self.homed = True
         return {
             "homed": True,
             "bottom_switch_pressed": pressed,
-            "steps": home_steps + backoff_steps,
-            "home_steps": home_steps,
-            "backoff_steps": backoff_steps,
-            "backoff_direction": backoff_direction,
+            "steps": moved,
             "position_cm": self.position_cm,
         }
 

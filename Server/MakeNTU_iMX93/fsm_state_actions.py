@@ -7,6 +7,58 @@ from fsm_states import STATE_AUTO_CONTROL, STATE_STEPPER_POSITION
 
 def update_failure(fsm, _context):
     if time.monotonic() >= fsm.state_data["timeout_at"]:
+        sequence = getattr(fsm, "auto_sequence", {})
+        if sequence.get("active"):
+            photo_index = int(sequence.get("photo_index", 0))
+            photo_count = int(sequence.get("photo_count", 1))
+
+            if sequence.get("abort_on_failure"):
+                log_event(
+                    "state",
+                    "Failure timeout completed. Aborting auto sequence for hardware safety.",
+                    throttle_seconds=0.0,
+                )
+                sequence["active"] = False
+                sequence["abort_on_failure"] = False
+                fsm.switch_state(STATE_AUTO_CONTROL)
+                return fsm.last_command
+
+            if not sequence.get("retry_used", False):
+                sequence["retry_used"] = True
+                log_event(
+                    "state",
+                    (
+                        "Failure timeout completed. Retrying current auto sequence photo "
+                        f"{photo_index + 1}/{photo_count} once."
+                    ),
+                    throttle_seconds=0.0,
+                )
+                fsm.switch_state(STATE_STEPPER_POSITION)
+                return fsm.last_command
+
+            sequence["photo_index"] = photo_index + 1
+            sequence["retry_used"] = False
+            if sequence["photo_index"] < photo_count:
+                log_event(
+                    "state",
+                    (
+                        "Retry failed. Skipping to next auto sequence photo "
+                        f"{sequence['photo_index'] + 1}/{photo_count}."
+                    ),
+                    throttle_seconds=0.0,
+                )
+                fsm.switch_state(STATE_STEPPER_POSITION)
+                return fsm.last_command
+
+            sequence["active"] = False
+            log_event(
+                "state",
+                "Retry failed on final auto sequence photo. Returning to AUTO_CONTROL.",
+                throttle_seconds=0.0,
+            )
+            fsm.switch_state(STATE_AUTO_CONTROL)
+            return fsm.last_command
+
         log_event("state", "Failure timeout completed. Returning to AUTO_CONTROL.", throttle_seconds=0.0)
         fsm.switch_state(STATE_AUTO_CONTROL)
         return fsm.last_command
@@ -61,6 +113,7 @@ def update_photo_capture(fsm, context):
     sequence = getattr(fsm, "auto_sequence", {})
     if sequence.get("active"):
         sequence["photo_index"] = int(sequence.get("photo_index", 0)) + 1
+        sequence["retry_used"] = False
         if sequence["photo_index"] < int(sequence.get("photo_count", 1)):
             log_event(
                 "state",

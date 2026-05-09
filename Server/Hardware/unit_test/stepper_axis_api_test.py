@@ -39,6 +39,8 @@ def print_result(result):
         f"requested_cm={result.get('requested_cm', 0):.2f} "
         f"moved_cm={result.get('moved_cm', 0):.2f} "
         f"steps={result.get('steps', 0)} "
+        f"home_steps={result.get('home_steps', 0)} "
+        f"backoff_steps={result.get('backoff_steps', 0)} "
         f"position_cm={result.get('position_cm', 0):.2f}"
     )
 
@@ -73,15 +75,16 @@ def run_command(command):
 def parse_args():
     parser = argparse.ArgumentParser(description="A4988 axis API unit test.")
     parser.add_argument("--gpiochip", default="/dev/gpiochip0")
-    parser.add_argument("--step-line", type=int, default=2)
-    parser.add_argument("--dir-line", type=int, default=3)
-    parser.add_argument("--bottom-switch-line", type=int, default=4)
+    parser.add_argument("--step-line", type=int, default=18)
+    parser.add_argument("--dir-line", type=int, default=17)
+    parser.add_argument("--bottom-switch-line", type=int, default=15)
     parser.add_argument("--bottom-switch-active-low", action="store_true", default=True)
     parser.add_argument("--bottom-switch-active-high", dest="bottom_switch_active_low", action="store_false")
     parser.add_argument("--steps-per-cm", type=float, default=1000.0)
-    parser.add_argument("--up-direction", type=int, choices=(0, 1), default=1)
-    parser.add_argument("--home-direction", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--up-direction", type=int, choices=(0, 1), default=0)
+    parser.add_argument("--home-direction", type=int, choices=(0, 1), default=1)
     parser.add_argument("--max-home-cm", type=float, default=24.0)
+    parser.add_argument("--home-backoff-steps", type=int, default=200)
     parser.add_argument("command", nargs="*", help="Optional one-shot command, e.g. home")
     return parser.parse_args()
 
@@ -103,6 +106,7 @@ def main():
         up_direction=args.up_direction,
         home_direction=args.home_direction,
         max_home_cm=args.max_home_cm,
+        home_backoff_steps=args.home_backoff_steps,
     )
 
     try:

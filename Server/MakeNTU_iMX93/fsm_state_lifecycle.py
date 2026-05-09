@@ -103,6 +103,8 @@ def enter_state(fsm, new_state):
         fsm.auto_sequence["photo_index"] = 0
         fsm.auto_sequence["photo_count"] = int(STEPPER_PHOTO_COUNT)
         fsm.auto_sequence["step_cm"] = float(STEPPER_ROD_LENGTH_CM) / max(1, int(STEPPER_PHOTO_COUNT))
+        fsm.auto_sequence["retry_used"] = False
+        fsm.auto_sequence["abort_on_failure"] = False
         fsm.api.set_light("blue", pattern="solid")
         if hasattr(fsm.motor_rig, "center"):
             fsm.motor_rig.center()
