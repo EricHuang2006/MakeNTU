@@ -6,6 +6,7 @@ from fsm_state_actions import update_failure, update_photo_capture
 from fsm_state_idle import update_auto_control, update_manual_control, update_setting
 from fsm_state_lifecycle import build_state_data, enter_state
 from fsm_state_tracking import (
+    update_horizontal_balance,
     update_horizontal_fix,
     update_horizontal_sweep,
     update_vertical_fix,
@@ -14,6 +15,7 @@ from fsm_state_tracking import (
 from fsm_states import (
     STATE_AUTO_CONTROL,
     STATE_FAILURE,
+    STATE_HORIZONTAL_BALANCE,
     STATE_HORIZONTAL_FIX,
     STATE_HORIZONTAL_SWEEP,
     STATE_MANUAL_CONTROL,
@@ -31,6 +33,7 @@ STATE_HANDLERS = {
     STATE_AUTO_CONTROL: update_auto_control,
     STATE_HORIZONTAL_SWEEP: update_horizontal_sweep,
     STATE_HORIZONTAL_FIX: update_horizontal_fix,
+    STATE_HORIZONTAL_BALANCE: update_horizontal_balance,
     STATE_VERTICAL_SWEEP: update_vertical_sweep,
     STATE_VERTICAL_FIX: update_vertical_fix,
     STATE_FAILURE: update_failure,

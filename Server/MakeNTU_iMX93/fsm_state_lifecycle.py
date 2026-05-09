@@ -1,6 +1,6 @@
 import time
 
-from config import HORIZONTAL_FIX_RIGHT_OFFSET_DEGREES
+from config import HORIZONTAL_FIX_RIGHT_OFFSET_DEGREES, SCAN_SETTLE_SECONDS
 from event_logger import log_event
 from fsm_output import build_motor_command
 from fsm_states import (
@@ -9,6 +9,7 @@ from fsm_states import (
     build_vertical_scan_angles,
     STATE_AUTO_CONTROL,
     STATE_FAILURE,
+    STATE_HORIZONTAL_BALANCE,
     STATE_HORIZONTAL_FIX,
     STATE_HORIZONTAL_SWEEP,
     STATE_PHOTO_CAPTURE,
@@ -41,6 +42,13 @@ def build_state_data(previous_state_data, current_angles, state):
         return {
             "recorded_angles": list(previous_state_data.get("recorded_angles", [])),
             "target_pan": current_angles["pan"],
+        }
+    if state == STATE_HORIZONTAL_BALANCE:
+        return {
+            "target_pan": current_angles["pan"],
+            "settle_until": time.monotonic() + SCAN_SETTLE_SECONDS,
+            "adjust_count": 0,
+            "last_margin_error": None,
         }
     if state == STATE_VERTICAL_SWEEP:
         scan_angles = build_vertical_scan_angles(current_angles["tilt"])
@@ -113,6 +121,14 @@ def enter_state(fsm, new_state):
                 f"mid={midpoint:.1f}, right_offset={HORIZONTAL_FIX_RIGHT_OFFSET_DEGREES:.1f} "
                 f"-> pan={fsm.state_data['target_pan']:.1f}"
             ),
+            throttle_seconds=0.0,
+        )
+        return
+
+    if new_state == STATE_HORIZONTAL_BALANCE:
+        log_event(
+            "state",
+            "Starting horizontal balance: equalize left and right group margins.",
             throttle_seconds=0.0,
         )
         return
