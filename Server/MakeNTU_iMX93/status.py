@@ -3,7 +3,12 @@ import time
 from event_logger import log_event
 from fsm_output import build_adjustment_status, build_motor_command
 from fsm_state_actions import update_failure, update_photo_capture
-from fsm_state_idle import update_auto_control, update_manual_control, update_setting
+from fsm_state_idle import (
+    update_auto_control,
+    update_manual_control,
+    update_setting,
+    update_stepper_position,
+)
 from fsm_state_lifecycle import build_state_data, enter_state
 from fsm_state_tracking import (
     update_horizontal_balance,
@@ -21,6 +26,7 @@ from fsm_states import (
     STATE_MANUAL_CONTROL,
     STATE_PHOTO_CAPTURE,
     STATE_SETTING,
+    STATE_STEPPER_POSITION,
     STATE_VERTICAL_FIX,
     STATE_VERTICAL_SWEEP,
 )
@@ -31,6 +37,7 @@ STATE_HANDLERS = {
     STATE_SETTING: update_setting,
     STATE_MANUAL_CONTROL: update_manual_control,
     STATE_AUTO_CONTROL: update_auto_control,
+    STATE_STEPPER_POSITION: update_stepper_position,
     STATE_HORIZONTAL_SWEEP: update_horizontal_sweep,
     STATE_HORIZONTAL_FIX: update_horizontal_fix,
     STATE_HORIZONTAL_BALANCE: update_horizontal_balance,
@@ -65,6 +72,12 @@ class CameraRigFSM:
             "FSM idle",
         )
         self.debug_problems = ["FSM idle"]
+        self.auto_sequence = {
+            "active": False,
+            "photo_index": 0,
+            "photo_count": 3,
+            "step_cm": 7.0,
+        }
 
     def init(self):
         if self.initialized:

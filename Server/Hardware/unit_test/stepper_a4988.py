@@ -21,8 +21,8 @@ import sys
 
 GPIOCHIP = "/dev/gpiochip0"
 
-STEP_LINE = 2
-DIR_LINE = 3
+STEP_LINE = 18
+DIR_LINE = 17
 
 # Arduino original:
 # delayMicroseconds(500)

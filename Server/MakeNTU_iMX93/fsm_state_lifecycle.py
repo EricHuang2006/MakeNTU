@@ -1,6 +1,11 @@
 import time
 
-from config import HORIZONTAL_FIX_RIGHT_OFFSET_DEGREES, SCAN_SETTLE_SECONDS
+from config import (
+    HORIZONTAL_FIX_RIGHT_OFFSET_DEGREES,
+    SCAN_SETTLE_SECONDS,
+    STEPPER_PHOTO_COUNT,
+    STEPPER_ROD_LENGTH_CM,
+)
 from event_logger import log_event
 from fsm_output import build_motor_command
 from fsm_states import (
@@ -14,6 +19,7 @@ from fsm_states import (
     STATE_HORIZONTAL_SWEEP,
     STATE_PHOTO_CAPTURE,
     STATE_SETTING,
+    STATE_STEPPER_POSITION,
     STATE_VERTICAL_FIX,
     STATE_VERTICAL_SWEEP,
 )
@@ -37,6 +43,11 @@ def build_state_data(previous_state_data, current_angles, state):
             "target_pan": float(scan_angles[0]),
             "sweep_started": False,
             "settle_until": 0.0,
+        }
+    if state == STATE_STEPPER_POSITION:
+        return {
+            "position_started": False,
+            "target_cm": None,
         }
     if state == STATE_HORIZONTAL_FIX:
         return {
@@ -88,6 +99,10 @@ def enter_state(fsm, new_state):
         return
 
     if new_state == STATE_AUTO_CONTROL:
+        fsm.auto_sequence["active"] = False
+        fsm.auto_sequence["photo_index"] = 0
+        fsm.auto_sequence["photo_count"] = int(STEPPER_PHOTO_COUNT)
+        fsm.auto_sequence["step_cm"] = float(STEPPER_ROD_LENGTH_CM) / max(1, int(STEPPER_PHOTO_COUNT))
         fsm.api.set_light("blue", pattern="solid")
         if hasattr(fsm.motor_rig, "center"):
             fsm.motor_rig.center()
@@ -100,6 +115,20 @@ def enter_state(fsm, new_state):
                 "AUTO_CONTROL: reset to hardware default",
             )
         fsm.debug_problems = ["AUTO_CONTROL waiting for pose/api trigger"]
+        return
+
+    if new_state == STATE_STEPPER_POSITION:
+        index = int(fsm.auto_sequence.get("photo_index", 0))
+        total = int(fsm.auto_sequence.get("photo_count", STEPPER_PHOTO_COUNT))
+        step_cm = float(fsm.auto_sequence.get("step_cm", 0.0))
+        log_event(
+            "state",
+            (
+                "Preparing stepper position "
+                f"{index + 1}/{total} at x={index * step_cm:.2f}cm."
+            ),
+            throttle_seconds=0.0,
+        )
         return
 
     if new_state == STATE_HORIZONTAL_SWEEP:

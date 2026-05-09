@@ -20,6 +20,7 @@ from drawing import draw_debug_view
 from event_logger import log_event, log_once_per_change
 from motor_control import CameraServoRig
 from pose_logic import analyze_people
+from stepper_axis_control import StepperAxisController
 from status import CameraRigFSM
 from vision import (
     apply_nms,
@@ -160,6 +161,7 @@ def main():
     client_socket = None
 
     motor_rig = CameraServoRig()
+    stepper_axis = StepperAxisController()
     if motor_rig.enabled:
         log_event(
             "motor",
@@ -252,6 +254,9 @@ def main():
                 "IMG_SIZE": IMG_SIZE,
                 "DISCORD_WEBHOOK_URL": DISCORD_WEBHOOK_URL,
                 "frame_counter": frame_counter,
+                "adjust_x_cm": stepper_axis.adjust_x_cm,
+                "stepper_home_bottom": stepper_axis.home_bottom,
+                "stepper_move_to_x_cm": stepper_axis.move_to_x_cm,
             }
 
             motor_command = fsm.update(context)
@@ -286,6 +291,7 @@ def main():
             uart_device.close()
 
         motor_rig.shutdown()
+        stepper_axis.shutdown()
         if client_socket is not None:
             client_socket.close()
         server_socket.close()
