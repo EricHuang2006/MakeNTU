@@ -1,6 +1,7 @@
 import time
 
 from config import (
+    FRAME_BALANCE_MAX_CONSECUTIVE_MISSING_TARGETS,
     LOG_NOW_ANGLE,
     SCAN_SETTLE_SECONDS,
     STEPPER_HYBRID_BALANCE_MAX_CONSECUTIVE_FAILURES,
@@ -737,6 +738,8 @@ def update_frame_balance(fsm, context):
     if not body_targets:
         if _fallback_from_failed_hybrid_balance(fsm, "no body targets"):
             return fsm.last_command
+        if _retry_missing_frame_balance_target(fsm, "no body targets"):
+            return fsm.last_command
         log_event(
             "error",
             "Frame balance could not see any body targets. Entering FAILURE.",
@@ -748,6 +751,8 @@ def update_frame_balance(fsm, context):
     if not face_targets:
         if _fallback_from_failed_hybrid_balance(fsm, "no face targets"):
             return fsm.last_command
+        if _retry_missing_frame_balance_target(fsm, "no face targets"):
+            return fsm.last_command
         log_event(
             "error",
             "Frame balance could not see any face targets. Entering FAILURE.",
@@ -755,6 +760,8 @@ def update_frame_balance(fsm, context):
         )
         fsm.switch_state(STATE_FAILURE)
         return fsm.last_command
+
+    fsm.state_data["missing_target_count"] = 0
 
     left_x = min(target["left_x"] for target in body_targets)
     right_x = max(target["right_x"] for target in body_targets)
@@ -972,3 +979,23 @@ def _fallback_from_failed_hybrid_balance(fsm, reason):
     sequence["hybrid_fallback_requested"] = True
     fsm.switch_state(STATE_STEPPER_POSITION)
     return True
+
+
+def _retry_missing_frame_balance_target(fsm, reason):
+    missing_count = int(fsm.state_data.get("missing_target_count", 0)) + 1
+    fsm.state_data["missing_target_count"] = missing_count
+    max_missing = max(1, int(FRAME_BALANCE_MAX_CONSECUTIVE_MISSING_TARGETS))
+
+    if missing_count < max_missing:
+        fsm.state_data["settle_until"] = time.monotonic() + SCAN_SETTLE_SECONDS
+        log_event(
+            "state",
+            (
+                f"Frame balance missing targets {missing_count}/{max_missing} ({reason}); "
+                "retrying before photo capture."
+            ),
+            throttle_seconds=0.0,
+        )
+        return True
+
+    return False

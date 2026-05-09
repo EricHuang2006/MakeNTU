@@ -101,6 +101,7 @@ def build_state_data(previous_state_data, current_angles, state):
             "adjust_count": 0,
             "last_margin_error": None,
             "last_face_error": None,
+            "missing_target_count": 0,
         }
     if state == STATE_PHOTO_CAPTURE:
         return {
