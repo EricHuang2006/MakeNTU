@@ -1,11 +1,17 @@
 import time
 
-from config import STEPPER_PHOTO_COUNT, STEPPER_ROD_LENGTH_CM
+from config import (
+    LOG_AUTO_CONTROL_EVERY_FRAME,
+    STEPPER_HYBRID_BALANCE_STEP_CM,
+    STEPPER_PHOTO_COUNT,
+    STEPPER_PHOTO_INTERVAL_CM,
+)
 from event_logger import log_event
 from fsm_output import build_motor_command
 from fsm_states import (
     STATE_FAILURE,
     STATE_AUTO_CONTROL,
+    STATE_FRAME_BALANCE,
     STATE_HORIZONTAL_SWEEP,
     STATE_STEPPER_POSITION,
     STATE_VERTICAL_SWEEP,
@@ -40,7 +46,26 @@ def update_manual_control(fsm, context):
 
 
 def update_auto_control(fsm, context):
-    pose_triggered = len(context["indices"]) > 0 or fsm.api.consume_capture_request(context)
+    person_detected = len(context["indices"]) > 0
+    hand_raised = bool(context.get("hand_raised", False))
+    api_triggered = fsm.api.consume_capture_request(context)
+    pose_triggered = hand_raised or person_detected or api_triggered
+    skeleton_count = len(context["indices"])
+    face_count = len(context.get("face_boxes", []))
+
+    if LOG_AUTO_CONTROL_EVERY_FRAME:
+        log_event(
+            "detect",
+            (
+                "AUTO_CONTROL trigger inputs: "
+                f"frame={context.get('frame_counter')}, "
+                f"skeletons={skeleton_count}, faces={face_count}, "
+                f"person_detected={person_detected}, "
+                f"hand_raised={hand_raised}, api_triggered={api_triggered}"
+            ),
+            throttle_key="auto_control_trigger_inputs",
+            throttle_seconds=0.0,
+        )
 
     if pose_triggered:
         photo_count = int(STEPPER_PHOTO_COUNT)
@@ -48,7 +73,14 @@ def update_auto_control(fsm, context):
             "active": True,
             "photo_index": 0,
             "photo_count": photo_count,
-            "step_cm": float(STEPPER_ROD_LENGTH_CM) / max(1, photo_count),
+            "step_cm": float(STEPPER_PHOTO_INTERVAL_CM),
+            "hybrid_step_cm": float(STEPPER_HYBRID_BALANCE_STEP_CM),
+            "current_stepper_cm": 0.0,
+            "last_photo_successful": False,
+            "hybrid_balance_active": False,
+            "hybrid_balance_for_photo": False,
+            "hybrid_balance_failure_count": 0,
+            "hybrid_fallback_requested": False,
             "height_positioned_index": None,
             "recovery_photo_index": None,
             "adjustment_retry_used": {},
@@ -60,19 +92,21 @@ def update_auto_control(fsm, context):
             "state",
             (
                 "AUTO_CONTROL capture sequence started: "
-                f"{photo_count} photos across {STEPPER_ROD_LENGTH_CM:.1f}cm."
+                f"{photo_count} photos at {STEPPER_PHOTO_INTERVAL_CM:.1f}cm intervals "
+                f"(person_detected={person_detected}, hand_raised={hand_raised}, "
+                f"api_triggered={api_triggered})."
             ),
             throttle_seconds=0.0,
         )
         fsm.switch_state(STATE_STEPPER_POSITION)
         return fsm.last_command
 
-    fsm.debug_problems = ["AUTO_CONTROL: waiting for skeleton or API trigger"]
+    fsm.debug_problems = ["AUTO_CONTROL: waiting for person, raised hand, or API trigger"]
     return build_motor_command(
-        fsm.current_angles["pan"],
-        fsm.current_angles["tilt"],
+        fsm.default_angles["pan"],
+        fsm.default_angles["tilt"],
         fsm.current_angles["height"],
-        "AUTO_CONTROL: full body mode standby",
+        "AUTO_CONTROL: centered pan/tilt, waiting for person, raised hand, or API trigger",
     )
 
 
@@ -90,6 +124,7 @@ def update_stepper_position(fsm, context):
     _ensure_recovery_data_for_photo(fsm.auto_sequence, index)
 
     if fsm.auto_sequence.get("height_positioned_index") == index:
+        fsm.auto_sequence["hybrid_fallback_requested"] = False
         log_event(
             "motor",
             (
@@ -118,15 +153,24 @@ def update_stepper_position(fsm, context):
                 ),
                 throttle_seconds=0.0,
             )
+            fsm.auto_sequence["current_stepper_cm"] = 0.0
+            fsm.auto_sequence["hybrid_balance_active"] = False
+            fsm.auto_sequence["hybrid_balance_for_photo"] = False
+            fsm.auto_sequence["hybrid_balance_failure_count"] = 0
+            fsm.auto_sequence["hybrid_fallback_requested"] = False
         else:
-            move_to_x_cm = context.get("stepper_move_to_x_cm")
-            if move_to_x_cm is None:
-                adjust_x_cm = context.get("adjust_x_cm")
-                if adjust_x_cm is None:
-                    raise RuntimeError("stepper movement API is missing from context")
-                result = adjust_x_cm(step_cm)
-            else:
-                result = move_to_x_cm(target_cm)
+            if _should_use_hybrid_step(fsm.auto_sequence):
+                result = _move_hybrid_step(fsm, context, target_cm)
+                fsm.state_data["position_started"] = True
+                fsm.switch_state(STATE_FRAME_BALANCE)
+                return fsm.last_command
+
+            current_cm = float(fsm.auto_sequence.get("current_stepper_cm", (index - 1) * step_cm))
+            result = _move_stepper_to_target(fsm, context, target_cm, target_cm - current_cm)
+            fsm.auto_sequence["hybrid_balance_active"] = False
+            fsm.auto_sequence["hybrid_balance_for_photo"] = False
+            fsm.auto_sequence["hybrid_balance_failure_count"] = 0
+            fsm.auto_sequence["hybrid_fallback_requested"] = False
             log_event(
                 "motor",
                 (
@@ -146,6 +190,58 @@ def update_stepper_position(fsm, context):
     next_state = _first_adjustment_state(fsm.auto_sequence)
     fsm.switch_state(next_state)
     return fsm.last_command
+
+
+def _should_use_hybrid_step(sequence):
+    return (
+        sequence.get("last_photo_successful", False) and
+        not sequence.get("hybrid_fallback_requested", False)
+    )
+
+
+def _move_hybrid_step(fsm, context, target_cm):
+    sequence = fsm.auto_sequence
+    current_cm = float(sequence.get("current_stepper_cm", (int(sequence["photo_index"]) - 1) * float(sequence["step_cm"])))
+    hybrid_step_cm = float(sequence.get("hybrid_step_cm", STEPPER_HYBRID_BALANCE_STEP_CM))
+    next_cm = min(float(target_cm), current_cm + hybrid_step_cm)
+    result = _move_stepper_to_target(fsm, context, next_cm, next_cm - current_cm)
+    position_cm = float(result.get("position_cm", next_cm))
+
+    reached_photo_point = abs(position_cm - float(target_cm)) <= 0.05
+    sequence["current_stepper_cm"] = position_cm
+    sequence["hybrid_balance_active"] = True
+    sequence["hybrid_balance_for_photo"] = reached_photo_point
+    sequence["hybrid_balance_failure_count"] = 0
+    sequence["hybrid_fallback_requested"] = False
+    if reached_photo_point:
+        sequence["height_positioned_index"] = int(sequence["photo_index"])
+
+    log_event(
+        "motor",
+        (
+            "Hybrid stepper move "
+            f"toward photo {int(sequence['photo_index']) + 1}/{int(sequence['photo_count'])}: "
+            f"current={current_cm:.2f}cm, next={position_cm:.2f}cm, "
+            f"target={float(target_cm):.2f}cm, "
+            f"for_photo={reached_photo_point}, steps={result.get('steps', 0)}."
+        ),
+        throttle_seconds=0.0,
+    )
+    return result
+
+
+def _move_stepper_to_target(fsm, context, target_cm, fallback_delta_cm):
+    move_to_x_cm = context.get("stepper_move_to_x_cm")
+    if move_to_x_cm is not None:
+        result = move_to_x_cm(target_cm)
+    else:
+        adjust_x_cm = context.get("adjust_x_cm")
+        if adjust_x_cm is None:
+            raise RuntimeError("stepper movement API is missing from context")
+        result = adjust_x_cm(fallback_delta_cm)
+
+    fsm.auto_sequence["current_stepper_cm"] = float(result.get("position_cm", target_cm))
+    return result
 
 
 def _ensure_recovery_data_for_photo(sequence, index):

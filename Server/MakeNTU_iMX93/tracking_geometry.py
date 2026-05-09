@@ -231,6 +231,19 @@ def rightmost_target_has_right_frame(targets, img_size):
     return right_edge_reached and center_in_exit_zone
 
 
+def target_has_right_frame(target, img_size):
+    right_edge_reached = target["right_x"] >= (img_size - EDGE_MARGIN_PX)
+    center_in_exit_zone = target["center_x"] >= (img_size - EDGE_EXIT_CENTER_MARGIN_PX)
+    return right_edge_reached and center_in_exit_zone
+
+
+def filter_right_exit_zone_targets(targets, img_size):
+    return [
+        target for target in targets
+        if not target_has_right_frame(target, img_size)
+    ]
+
+
 def has_target_on_left_side(targets, img_size):
     if not targets:
         return False
@@ -245,6 +258,17 @@ def has_target_in_left_entry_zone(targets):
 
     return any(
         target["center_x"] <= EDGE_EXIT_CENTER_MARGIN_PX or target["left_x"] <= EDGE_MARGIN_PX
+        for target in targets
+    )
+
+
+def has_centered_target(targets, img_size, tolerance_px=BODY_CENTER_TOLERANCE_PX):
+    if not targets:
+        return False
+
+    frame_center_x = img_size / 2.0
+    return any(
+        abs(target["center_x"] - frame_center_x) <= tolerance_px
         for target in targets
     )
 

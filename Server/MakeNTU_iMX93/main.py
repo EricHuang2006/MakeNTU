@@ -199,6 +199,7 @@ def main():
             all_keypoints = []
             indices = []
             face_boxes = []
+            hand_raised = False
 
             if fsm.state != STATE_FAILURE:
                 input_data, img = preprocess_frame(frame, model_info, IMG_SIZE)
@@ -219,6 +220,7 @@ def main():
                     keypoint_conf=0.3,
                 )
                 face_boxes = pose_result["face_boxes"]
+                hand_raised = pose_result.get("hand_raised", False)
             else:
                 log_once_per_change(
                     "state",
@@ -251,6 +253,7 @@ def main():
                 "all_keypoints": all_keypoints,
                 "indices": indices,
                 "face_boxes": face_boxes,
+                "hand_raised": hand_raised,
                 "IMG_SIZE": IMG_SIZE,
                 "DISCORD_WEBHOOK_URL": DISCORD_WEBHOOK_URL,
                 "frame_counter": frame_counter,

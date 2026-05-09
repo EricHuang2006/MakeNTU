@@ -1,20 +1,29 @@
 import time
 
+from config import LED_PHOTO_SUCCESS_SECONDS
 from event_logger import log_event
 from fsm_output import build_motor_command
 from fsm_states import (
     STATE_AUTO_CONTROL,
+    STATE_FRAME_BALANCE,
     STATE_HORIZONTAL_BALANCE,
     STATE_HORIZONTAL_FIX,
     STATE_HORIZONTAL_SWEEP,
     STATE_STEPPER_POSITION,
+    STATE_VERTICAL_BALANCE,
     STATE_VERTICAL_FIX,
     STATE_VERTICAL_SWEEP,
 )
 
 
 HORIZONTAL_STATES = {STATE_HORIZONTAL_SWEEP, STATE_HORIZONTAL_FIX}
-VERTICAL_STATES = {STATE_VERTICAL_SWEEP, STATE_VERTICAL_FIX, STATE_HORIZONTAL_BALANCE}
+VERTICAL_STATES = {
+    STATE_VERTICAL_SWEEP,
+    STATE_VERTICAL_FIX,
+    STATE_VERTICAL_BALANCE,
+    STATE_FRAME_BALANCE,
+    STATE_HORIZONTAL_BALANCE,
+}
 
 
 def update_failure(fsm, _context):
@@ -124,6 +133,11 @@ def _skip_current_photo(fsm, sequence, failed_adjustment=None):
     sequence["photo_index"] = photo_index + 1
     sequence["adjustment_retry_used"] = {}
     sequence["vertical_backed_to_horizontal"] = False
+    sequence["last_photo_successful"] = False
+    sequence["hybrid_balance_active"] = False
+    sequence["hybrid_balance_for_photo"] = False
+    sequence["hybrid_balance_failure_count"] = 0
+    sequence["hybrid_fallback_requested"] = False
     if failed_adjustment == "horizontal":
         sequence["next_photo_start_horizontal"] = True
 
@@ -159,6 +173,11 @@ def _ensure_recovery_data_for_photo(sequence, index):
         sequence.setdefault("vertical_backed_to_horizontal", False)
         sequence.setdefault("next_photo_start_horizontal", False)
         sequence.setdefault("reset_tilt_before_horizontal", False)
+        sequence.setdefault("last_photo_successful", False)
+        sequence.setdefault("hybrid_balance_active", False)
+        sequence.setdefault("hybrid_balance_for_photo", False)
+        sequence.setdefault("hybrid_balance_failure_count", 0)
+        sequence.setdefault("hybrid_fallback_requested", False)
         return
 
     sequence["recovery_photo_index"] = index
@@ -170,6 +189,11 @@ def _ensure_recovery_data_for_photo(sequence, index):
     sequence["vertical_backed_to_horizontal"] = False
     sequence.setdefault("next_photo_start_horizontal", False)
     sequence.setdefault("reset_tilt_before_horizontal", False)
+    sequence.setdefault("last_photo_successful", False)
+    sequence.setdefault("hybrid_balance_active", False)
+    sequence.setdefault("hybrid_balance_for_photo", False)
+    sequence.setdefault("hybrid_balance_failure_count", 0)
+    sequence.setdefault("hybrid_fallback_requested", False)
 
 
 def update_photo_capture(fsm, context):
@@ -198,6 +222,7 @@ def update_photo_capture(fsm, context):
         photo = fsm.api.take_photo(context["frame"])
         uploaded = fsm.api.upload_photo(photo, context.get("DISCORD_WEBHOOK_URL"))
         fsm.state_data["captured"] = True
+        fsm.state_data["success_until"] = time.monotonic() + LED_PHOTO_SUCCESS_SECONDS
         fsm.debug_problems = ["PHOTO_CAPTURE: captured frame and upload requested"]
         if uploaded:
             log_event("api", "Photo upload succeeded.", throttle_seconds=0.0)
@@ -210,13 +235,30 @@ def update_photo_capture(fsm, context):
             "PHOTO_CAPTURE: green light and upload photo",
         )
 
+    if time.monotonic() < fsm.state_data.get("success_until", 0.0):
+        fsm.debug_problems = ["PHOTO_CAPTURE: green success light before next move"]
+        return build_motor_command(
+            fsm.current_angles["pan"],
+            fsm.current_angles["tilt"],
+            fsm.current_angles["height"],
+            "PHOTO_CAPTURE: green success light before next move",
+        )
+
+    fsm.api.set_light("blue", pattern="solid")
     sequence = getattr(fsm, "auto_sequence", {})
     if sequence.get("active"):
-        sequence["photo_index"] = int(sequence.get("photo_index", 0)) + 1
+        completed_index = int(sequence.get("photo_index", 0))
+        sequence["last_photo_successful"] = True
+        sequence["current_stepper_cm"] = completed_index * float(sequence.get("step_cm", 0.0))
+        sequence["photo_index"] = completed_index + 1
         sequence["adjustment_retry_used"] = {}
         sequence["vertical_backed_to_horizontal"] = False
         sequence["next_photo_start_horizontal"] = False
         sequence["reset_tilt_before_horizontal"] = False
+        sequence["hybrid_balance_active"] = False
+        sequence["hybrid_balance_for_photo"] = False
+        sequence["hybrid_balance_failure_count"] = 0
+        sequence["hybrid_fallback_requested"] = False
         if sequence["photo_index"] < int(sequence.get("photo_count", 1)):
             log_event(
                 "state",

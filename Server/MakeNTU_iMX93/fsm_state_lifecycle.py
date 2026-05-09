@@ -2,9 +2,12 @@ import time
 
 from config import (
     HORIZONTAL_FIX_RIGHT_OFFSET_DEGREES,
+    LED_PHOTO_COUNTDOWN_BLINKS,
+    LED_PHOTO_COUNTDOWN_SECONDS,
     SCAN_SETTLE_SECONDS,
+    STEPPER_HYBRID_BALANCE_STEP_CM,
+    STEPPER_PHOTO_INTERVAL_CM,
     STEPPER_PHOTO_COUNT,
-    STEPPER_ROD_LENGTH_CM,
 )
 from event_logger import log_event
 from fsm_output import build_motor_command
@@ -14,12 +17,14 @@ from fsm_states import (
     build_vertical_scan_angles,
     STATE_AUTO_CONTROL,
     STATE_FAILURE,
+    STATE_FRAME_BALANCE,
     STATE_HORIZONTAL_BALANCE,
     STATE_HORIZONTAL_FIX,
     STATE_HORIZONTAL_SWEEP,
     STATE_PHOTO_CAPTURE,
     STATE_SETTING,
     STATE_STEPPER_POSITION,
+    STATE_VERTICAL_BALANCE,
     STATE_VERTICAL_FIX,
     STATE_VERTICAL_SWEEP,
 )
@@ -35,6 +40,7 @@ def build_state_data(previous_state_data, current_angles, state):
             "recorded_angles": [],
             "right_exit_seen": False,
             "left_entry_clear_seen_after_exit": False,
+            "initial_exit_side_ignored": False,
             "rightmost_angle": None,
             "leave_angle": None,
             "pending_body_candidate_angle": None,
@@ -79,9 +85,27 @@ def build_state_data(previous_state_data, current_angles, state):
             "snapshot_targets": list(previous_state_data.get("snapshot_targets", [])),
             "target_tilt": current_angles["tilt"],
         }
+    if state == STATE_VERTICAL_BALANCE:
+        return {
+            "target_tilt": current_angles["tilt"],
+            "settle_until": time.monotonic() + SCAN_SETTLE_SECONDS,
+            "adjust_count": 0,
+            "last_face_error": None,
+        }
+    if state == STATE_FRAME_BALANCE:
+        return {
+            "target_pan": current_angles["pan"],
+            "target_tilt": current_angles["tilt"],
+            "settle_until": time.monotonic() + SCAN_SETTLE_SECONDS,
+            "phase": "horizontal",
+            "adjust_count": 0,
+            "last_margin_error": None,
+            "last_face_error": None,
+        }
     if state == STATE_PHOTO_CAPTURE:
         return {
             "flash_until": 0.0,
+            "success_until": 0.0,
             "captured": False,
         }
     return {}
@@ -102,7 +126,14 @@ def enter_state(fsm, new_state):
         fsm.auto_sequence["active"] = False
         fsm.auto_sequence["photo_index"] = 0
         fsm.auto_sequence["photo_count"] = int(STEPPER_PHOTO_COUNT)
-        fsm.auto_sequence["step_cm"] = float(STEPPER_ROD_LENGTH_CM) / max(1, int(STEPPER_PHOTO_COUNT))
+        fsm.auto_sequence["step_cm"] = float(STEPPER_PHOTO_INTERVAL_CM)
+        fsm.auto_sequence["hybrid_step_cm"] = float(STEPPER_HYBRID_BALANCE_STEP_CM)
+        fsm.auto_sequence["current_stepper_cm"] = 0.0
+        fsm.auto_sequence["last_photo_successful"] = False
+        fsm.auto_sequence["hybrid_balance_active"] = False
+        fsm.auto_sequence["hybrid_balance_for_photo"] = False
+        fsm.auto_sequence["hybrid_balance_failure_count"] = 0
+        fsm.auto_sequence["hybrid_fallback_requested"] = False
         fsm.auto_sequence["height_positioned_index"] = None
         fsm.auto_sequence["recovery_photo_index"] = None
         fsm.auto_sequence["adjustment_retry_used"] = {}
@@ -188,6 +219,22 @@ def enter_state(fsm, new_state):
         )
         return
 
+    if new_state == STATE_VERTICAL_BALANCE:
+        log_event(
+            "state",
+            "Starting vertical balance: move average face center to one-third from top.",
+            throttle_seconds=0.0,
+        )
+        return
+
+    if new_state == STATE_FRAME_BALANCE:
+        log_event(
+            "state",
+            "Starting frame balance: alternating horizontal and vertical fine tuning.",
+            throttle_seconds=0.0,
+        )
+        return
+
     if new_state == STATE_FAILURE:
         fsm.api.set_light("red", pattern="blink", duration_s=FAILURE_TIMEOUT_SECONDS)
         fsm.state_data["timeout_at"] = time.monotonic() + FAILURE_TIMEOUT_SECONDS
@@ -195,9 +242,24 @@ def enter_state(fsm, new_state):
         return
 
     if new_state == STATE_PHOTO_CAPTURE:
-        fsm.state_data["flash_until"] = time.monotonic() + 3.0
-        fsm.api.set_light("white", pattern="blink", duration_s=3.0)
-        log_event("api", "Photo capture countdown started: blinking light for 3 seconds.", throttle_seconds=0.0)
+        countdown_seconds = float(LED_PHOTO_COUNTDOWN_SECONDS)
+        blink_count = max(1, int(LED_PHOTO_COUNTDOWN_BLINKS))
+        blink_interval_s = countdown_seconds / (blink_count * 2.0)
+        fsm.state_data["flash_until"] = time.monotonic() + countdown_seconds
+        fsm.api.set_light(
+            "white",
+            pattern="blink",
+            duration_s=countdown_seconds,
+            blink_interval_s=blink_interval_s,
+        )
+        log_event(
+            "api",
+            (
+                "Photo capture countdown started: "
+                f"{blink_count} white blinks over {countdown_seconds:.1f} seconds."
+            ),
+            throttle_seconds=0.0,
+        )
 
 
 def _compute_vertical_fix_target(state_data):

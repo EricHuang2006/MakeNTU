@@ -36,11 +36,19 @@ class DummyRigApi:
         self.auto_mode_requested = False
         return requested
 
-    def set_light(self, color, pattern="solid", duration_s=0.0):
-        self.led.set_light(color, pattern=pattern, duration_s=duration_s)
+    def set_light(self, color, pattern="solid", duration_s=0.0, blink_interval_s=None):
+        self.led.set_light(
+            color,
+            pattern=pattern,
+            duration_s=duration_s,
+            blink_interval_s=blink_interval_s,
+        )
         log_event(
             "api",
-            f"Light set to color={color}, pattern={pattern}, duration={duration_s:.1f}s",
+            (
+                f"Light set to color={color}, pattern={pattern}, "
+                f"duration={duration_s:.1f}s"
+            ),
             throttle_seconds=0.0,
         )
 

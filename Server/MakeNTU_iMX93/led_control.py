@@ -99,7 +99,7 @@ class RgbLedController:
         self.blink_thread = None
         self.blink_stop.clear()
 
-    def set_light(self, color, pattern="solid", duration_s=0.0):
+    def set_light(self, color, pattern="solid", duration_s=0.0, blink_interval_s=None):
         color = str(color).lower()
         pattern = str(pattern).lower()
 
@@ -118,13 +118,14 @@ class RgbLedController:
         with self.lock:
             self._stop_blink()
             if pattern == "blink":
-                self._start_blink(color, float(duration_s))
+                self._start_blink(color, float(duration_s), blink_interval_s)
             else:
                 self._set_color_now(color)
 
-    def _start_blink(self, color, duration_s):
+    def _start_blink(self, color, duration_s, blink_interval_s=None):
         stop_at = time.monotonic() + duration_s if duration_s > 0 else None
-        interval = max(0.05, float(LED_BLINK_INTERVAL_SECONDS))
+        interval = LED_BLINK_INTERVAL_SECONDS if blink_interval_s is None else blink_interval_s
+        interval = max(0.05, float(interval))
 
         def blink_loop():
             on = False

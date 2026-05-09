@@ -11,15 +11,18 @@ from fsm_state_idle import (
 )
 from fsm_state_lifecycle import build_state_data, enter_state
 from fsm_state_tracking import (
+    update_frame_balance,
     update_horizontal_balance,
     update_horizontal_fix,
     update_horizontal_sweep,
+    update_vertical_balance,
     update_vertical_fix,
     update_vertical_sweep,
 )
 from fsm_states import (
     STATE_AUTO_CONTROL,
     STATE_FAILURE,
+    STATE_FRAME_BALANCE,
     STATE_HORIZONTAL_BALANCE,
     STATE_HORIZONTAL_FIX,
     STATE_HORIZONTAL_SWEEP,
@@ -28,6 +31,7 @@ from fsm_states import (
     STATE_SETTING,
     STATE_STEPPER_POSITION,
     STATE_VERTICAL_FIX,
+    STATE_VERTICAL_BALANCE,
     STATE_VERTICAL_SWEEP,
 )
 from rig_api import DummyRigApi
@@ -43,6 +47,8 @@ STATE_HANDLERS = {
     STATE_HORIZONTAL_BALANCE: update_horizontal_balance,
     STATE_VERTICAL_SWEEP: update_vertical_sweep,
     STATE_VERTICAL_FIX: update_vertical_fix,
+    STATE_VERTICAL_BALANCE: update_vertical_balance,
+    STATE_FRAME_BALANCE: update_frame_balance,
     STATE_FAILURE: update_failure,
     STATE_PHOTO_CAPTURE: update_photo_capture,
 }
@@ -76,7 +82,14 @@ class CameraRigFSM:
             "active": False,
             "photo_index": 0,
             "photo_count": 3,
-            "step_cm": 7.0,
+            "step_cm": 8.0,
+            "hybrid_step_cm": 2.0,
+            "current_stepper_cm": 0.0,
+            "last_photo_successful": False,
+            "hybrid_balance_active": False,
+            "hybrid_balance_for_photo": False,
+            "hybrid_balance_failure_count": 0,
+            "hybrid_fallback_requested": False,
             "height_positioned_index": None,
             "recovery_photo_index": None,
             "adjustment_retry_used": {},
@@ -168,7 +181,13 @@ class CameraRigFSM:
     def get_debug_view(self, indices):
         people_count = len(indices)
         quality_score = min(100, people_count * 30)
-        photo_good = self.state in (STATE_VERTICAL_FIX, STATE_PHOTO_CAPTURE)
+        photo_good = self.state in (
+            STATE_VERTICAL_FIX,
+            STATE_VERTICAL_BALANCE,
+            STATE_HORIZONTAL_BALANCE,
+            STATE_FRAME_BALANCE,
+            STATE_PHOTO_CAPTURE,
+        )
 
         return {
             "photo_good": photo_good,

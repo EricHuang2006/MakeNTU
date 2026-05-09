@@ -1,6 +1,12 @@
 import numpy as np
 
 
+LEFT_SHOULDER = 5
+RIGHT_SHOULDER = 6
+LEFT_WRIST = 9
+RIGHT_WRIST = 10
+
+
 def estimate_face_box(kpts, conf, img_size, keypoint_conf=0.3):
     """
     Estimate a face/head box using COCO face keypoints:
@@ -37,16 +43,35 @@ def estimate_face_box(kpts, conf, img_size, keypoint_conf=0.3):
     return fx1, fy1, fx2, fy2, conf
 
 
+def has_raised_hand(kpts, keypoint_conf=0.3):
+    left_shoulder = kpts[LEFT_SHOULDER]
+    right_shoulder = kpts[RIGHT_SHOULDER]
+    left_wrist = kpts[LEFT_WRIST]
+    right_wrist = kpts[RIGHT_WRIST]
+
+    if left_wrist[2] > keypoint_conf and left_shoulder[2] > keypoint_conf:
+        if left_wrist[1] < left_shoulder[1]:
+            return True
+
+    if right_wrist[2] > keypoint_conf and right_shoulder[2] > keypoint_conf:
+        if right_wrist[1] < right_shoulder[1]:
+            return True
+
+    return False
+
+
 def analyze_people(indices, scores, all_keypoints, img_size, keypoint_conf=0.3):
     """
     Analyze final NMS people and return face boxes for display/FSM use.
     """
 
     face_boxes = []
+    hand_raised = False
 
     if len(indices) == 0:
         return {
             "face_boxes": face_boxes,
+            "hand_raised": hand_raised,
         }
 
     for i in indices:
@@ -54,6 +79,7 @@ def analyze_people(indices, scores, all_keypoints, img_size, keypoint_conf=0.3):
 
         conf = scores[idx]
         kpts = all_keypoints[idx]
+        hand_raised = hand_raised or has_raised_hand(kpts, keypoint_conf=keypoint_conf)
 
         # Face box
         face_box = estimate_face_box(
@@ -68,4 +94,5 @@ def analyze_people(indices, scores, all_keypoints, img_size, keypoint_conf=0.3):
 
     return {
         "face_boxes": face_boxes,
+        "hand_raised": hand_raised,
     }
