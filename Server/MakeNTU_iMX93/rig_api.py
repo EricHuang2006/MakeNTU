@@ -7,34 +7,18 @@ from led_control import RgbLedController
 
 class DummyRigApi:
     def __init__(self):
-        self.capture_requested = False
-        self.manual_mode_requested = False
-        self.auto_mode_requested = False
+        self.mode_selection = None
         self.led = RgbLedController()
 
-    def request_capture(self):
-        self.capture_requested = True
+    def request_mode_selection(self, mode_number):
+        self.mode_selection = mode_number
 
-    def consume_capture_request(self, context):
-        requested = self.capture_requested or bool(context.get("api_capture_requested", False))
-        self.capture_requested = False
-        return requested
-
-    def request_manual_mode(self):
-        self.manual_mode_requested = True
-
-    def consume_manual_mode_request(self, context):
-        requested = self.manual_mode_requested or bool(context.get("api_manual_mode", False))
-        self.manual_mode_requested = False
-        return requested
-
-    def request_auto_mode(self):
-        self.auto_mode_requested = True
-
-    def consume_auto_mode_request(self, context):
-        requested = self.auto_mode_requested or bool(context.get("api_auto_mode", False))
-        self.auto_mode_requested = False
-        return requested
+    def consume_mode_selection(self, context):
+        selected = context.get("mode_selection", None)
+        if selected is None:
+            selected = self.mode_selection
+        self.mode_selection = None
+        return selected
 
     def set_light(self, color, pattern="solid", duration_s=0.0, blink_interval_s=None):
         self.led.set_light(

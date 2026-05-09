@@ -4,13 +4,11 @@ from config import LED_PHOTO_SUCCESS_SECONDS
 from event_logger import log_event
 from fsm_output import build_motor_command
 from fsm_states import (
-    STATE_AUTO_CONTROL,
     STATE_FRAME_BALANCE,
-    STATE_HORIZONTAL_BALANCE,
     STATE_HORIZONTAL_FIX,
     STATE_HORIZONTAL_SWEEP,
+    STATE_MODE_SELECT,
     STATE_STEPPER_POSITION,
-    STATE_VERTICAL_BALANCE,
     STATE_VERTICAL_FIX,
     STATE_VERTICAL_SWEEP,
 )
@@ -20,9 +18,7 @@ HORIZONTAL_STATES = {STATE_HORIZONTAL_SWEEP, STATE_HORIZONTAL_FIX}
 VERTICAL_STATES = {
     STATE_VERTICAL_SWEEP,
     STATE_VERTICAL_FIX,
-    STATE_VERTICAL_BALANCE,
     STATE_FRAME_BALANCE,
-    STATE_HORIZONTAL_BALANCE,
 }
 
 
@@ -33,8 +29,8 @@ def update_failure(fsm, _context):
             _recover_auto_sequence_failure(fsm, sequence)
             return fsm.last_command
 
-        log_event("state", "Failure timeout completed. Returning to AUTO_CONTROL.", throttle_seconds=0.0)
-        fsm.switch_state(STATE_AUTO_CONTROL)
+        log_event("state", "Failure timeout completed. Returning to MODE_SELECT.", throttle_seconds=0.0)
+        fsm.switch_state(STATE_MODE_SELECT)
         return fsm.last_command
 
     return build_motor_command(
@@ -158,10 +154,10 @@ def _skip_current_photo(fsm, sequence, failed_adjustment=None):
     sequence["active"] = False
     log_event(
         "state",
-        "Final auto sequence height failed. Returning to AUTO_CONTROL.",
+        "Final auto sequence height failed. Returning to MODE_SELECT.",
         throttle_seconds=0.0,
     )
-    fsm.switch_state(STATE_AUTO_CONTROL)
+    fsm.switch_state(STATE_MODE_SELECT)
 
 
 def _ensure_recovery_data_for_photo(sequence, index):
@@ -274,5 +270,5 @@ def update_photo_capture(fsm, context):
         sequence["active"] = False
         log_event("state", "Auto capture sequence completed.", throttle_seconds=0.0)
 
-    fsm.switch_state(STATE_AUTO_CONTROL)
+    fsm.switch_state(STATE_MODE_SELECT)
     return fsm.last_command

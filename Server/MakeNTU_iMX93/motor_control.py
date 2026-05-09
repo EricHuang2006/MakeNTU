@@ -149,8 +149,12 @@ class CameraServoRig:
     def reset_all(self):
         if not self.enabled:
             return
-        self.pan(self.pan1.center)
-        self.tilt(self.tilt1.center)
+        self.pan1.set_angle(self.pan1.center)
+        self.tilt1.set_angle(self.tilt1.center)
+        self.tilt2.set_angle(self.tilt2.center)
+        self.current["pan"] = float(self.pan1.center)
+        self.current["tilt"] = float(self.tilt1.center)
+        self.current["height"] = DEFAULT_HEIGHT_ANGLE
         log_event(
             "motor",
             (
@@ -166,9 +170,6 @@ class CameraServoRig:
         if not self.enabled:
             return
         self.reset_all()
-        self.current["pan"] = float(self.pan1.center)
-        self.current["tilt"] = float(self.tilt1.center)
-        self.current["height"] = DEFAULT_HEIGHT_ANGLE
         time.sleep(0.08)
 
     def pan(self, angle):

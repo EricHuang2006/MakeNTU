@@ -4,9 +4,8 @@ from config import (
     HORIZONTAL_FIX_RIGHT_OFFSET_DEGREES,
     LED_PHOTO_COUNTDOWN_BLINKS,
     LED_PHOTO_COUNTDOWN_SECONDS,
+    MULTI_AUTO_HORIZONTAL_SCAN_DELTA,
     SCAN_SETTLE_SECONDS,
-    STEPPER_HYBRID_BALANCE_STEP_CM,
-    STEPPER_PHOTO_INTERVAL_CM,
     STEPPER_PHOTO_COUNT,
 )
 from event_logger import log_event
@@ -15,25 +14,46 @@ from fsm_states import (
     FAILURE_TIMEOUT_SECONDS,
     build_horizontal_scan_angles,
     build_vertical_scan_angles,
-    STATE_AUTO_CONTROL,
     STATE_FAILURE,
     STATE_FRAME_BALANCE,
-    STATE_HORIZONTAL_BALANCE,
     STATE_HORIZONTAL_FIX,
     STATE_HORIZONTAL_SWEEP,
+    STATE_MANUAL_CONTROL,
+    STATE_MODE_SELECT,
+    STATE_MULTI_MODE_AUTO,
     STATE_PHOTO_CAPTURE,
     STATE_SETTING,
+    STATE_SINGLE_MODE_AUTO,
     STATE_STEPPER_POSITION,
-    STATE_VERTICAL_BALANCE,
     STATE_VERTICAL_FIX,
     STATE_VERTICAL_SWEEP,
 )
 from tracking_geometry import clamp_angle
 
 
-def build_state_data(previous_state_data, current_angles, state):
+def build_state_data(previous_state_data, current_angles, state, fsm=None):
+    if state == STATE_SETTING:
+        return {
+            "reset_done": False,
+        }
+    if state == STATE_MODE_SELECT:
+        return {}
+    if state in (STATE_SINGLE_MODE_AUTO, STATE_MULTI_MODE_AUTO):
+        return {}
+    if state == STATE_MANUAL_CONTROL:
+        return {
+            "positioned": False,
+            "target_pan": current_angles["pan"],
+            "target_tilt": current_angles["tilt"],
+            "gesture_ready_at": 0.0,
+        }
     if state == STATE_HORIZONTAL_SWEEP:
-        scan_angles = build_horizontal_scan_angles()
+        center_pan = current_angles["pan"]
+        scan_delta = MULTI_AUTO_HORIZONTAL_SCAN_DELTA
+        if fsm is not None:
+            center_pan = fsm.default_angles.get("pan", center_pan)
+            scan_delta = fsm.auto_sequence.get("horizontal_scan_delta", scan_delta)
+        scan_angles = build_horizontal_scan_angles(center_pan, scan_delta)
         return {
             "scan_index": 0,
             "scan_angles": scan_angles,
@@ -60,13 +80,6 @@ def build_state_data(previous_state_data, current_angles, state):
             "recorded_angles": list(previous_state_data.get("recorded_angles", [])),
             "target_pan": current_angles["pan"],
         }
-    if state == STATE_HORIZONTAL_BALANCE:
-        return {
-            "target_pan": current_angles["pan"],
-            "settle_until": time.monotonic() + SCAN_SETTLE_SECONDS,
-            "adjust_count": 0,
-            "last_margin_error": None,
-        }
     if state == STATE_VERTICAL_SWEEP:
         scan_angles = build_vertical_scan_angles(current_angles["tilt"])
         return {
@@ -84,13 +97,6 @@ def build_state_data(previous_state_data, current_angles, state):
             "recorded_angles": list(previous_state_data.get("recorded_angles", [])),
             "snapshot_targets": list(previous_state_data.get("snapshot_targets", [])),
             "target_tilt": current_angles["tilt"],
-        }
-    if state == STATE_VERTICAL_BALANCE:
-        return {
-            "target_tilt": current_angles["tilt"],
-            "settle_until": time.monotonic() + SCAN_SETTLE_SECONDS,
-            "adjust_count": 0,
-            "last_face_error": None,
         }
     if state == STATE_FRAME_BALANCE:
         return {
@@ -123,36 +129,32 @@ def enter_state(fsm, new_state):
         )
         return
 
-    if new_state == STATE_AUTO_CONTROL:
+    if new_state == STATE_MODE_SELECT:
         fsm.auto_sequence["active"] = False
-        fsm.auto_sequence["photo_index"] = 0
-        fsm.auto_sequence["photo_count"] = int(STEPPER_PHOTO_COUNT)
-        fsm.auto_sequence["step_cm"] = float(STEPPER_PHOTO_INTERVAL_CM)
-        fsm.auto_sequence["hybrid_step_cm"] = float(STEPPER_HYBRID_BALANCE_STEP_CM)
-        fsm.auto_sequence["current_stepper_cm"] = 0.0
-        fsm.auto_sequence["last_photo_successful"] = False
-        fsm.auto_sequence["hybrid_balance_active"] = False
-        fsm.auto_sequence["hybrid_balance_for_photo"] = False
-        fsm.auto_sequence["hybrid_balance_failure_count"] = 0
-        fsm.auto_sequence["hybrid_fallback_requested"] = False
-        fsm.auto_sequence["height_positioned_index"] = None
-        fsm.auto_sequence["recovery_photo_index"] = None
-        fsm.auto_sequence["adjustment_retry_used"] = {}
-        fsm.auto_sequence["vertical_backed_to_horizontal"] = False
-        fsm.auto_sequence["next_photo_start_horizontal"] = False
-        fsm.auto_sequence["reset_tilt_before_horizontal"] = False
+        fsm.api.set_light("blue", pattern="solid")
+        fsm.debug_problems = ["MODE_SELECT waiting for hand sign 1, 2, or 3"]
+        log_event("state", "Waiting for hand sign mode selection: 1=single, 2=multi, 3=manual.", throttle_seconds=0.0)
+        return
+
+    if new_state == STATE_SINGLE_MODE_AUTO:
+        fsm.api.set_light("blue", pattern="solid")
+        log_event("state", "Selected single-user auto mode.", throttle_seconds=0.0)
+        return
+
+    if new_state == STATE_MULTI_MODE_AUTO:
+        fsm.api.set_light("blue", pattern="solid")
+        log_event("state", "Selected multi-user auto mode.", throttle_seconds=0.0)
+        return
+
+    if new_state == STATE_MANUAL_CONTROL:
         fsm.api.set_light("blue", pattern="solid")
         if hasattr(fsm.motor_rig, "center"):
             fsm.motor_rig.center()
             fsm.current_angles.update(fsm.motor_rig.current)
             fsm.default_angles = dict(fsm.motor_rig.current)
-            fsm.last_command = build_motor_command(
-                fsm.default_angles["pan"],
-                fsm.default_angles["tilt"],
-                fsm.default_angles["height"],
-                "AUTO_CONTROL: reset to hardware default",
-            )
-        fsm.debug_problems = ["AUTO_CONTROL waiting for pose/api trigger"]
+            fsm.state_data["target_pan"] = fsm.default_angles["pan"]
+            fsm.state_data["target_tilt"] = fsm.default_angles["tilt"]
+        log_event("state", "Selected manual-control mode; centering servos and moving to 10cm.", throttle_seconds=0.0)
         return
 
     if new_state == STATE_STEPPER_POSITION:
@@ -184,7 +186,15 @@ def enter_state(fsm, new_state):
                 ),
                 throttle_seconds=0.0,
             )
-        log_event("state", "Starting horizontal sweep: rotate from 90 to 0 without detection.", throttle_seconds=0.0)
+        log_event(
+            "state",
+            (
+                "Starting horizontal sweep: "
+                f"{fsm.state_data['scan_angles'][0]:.1f} to "
+                f"{fsm.state_data['scan_angles'][-1]:.1f} degrees."
+            ),
+            throttle_seconds=0.0,
+        )
         return
 
     if new_state == STATE_HORIZONTAL_FIX:
@@ -203,27 +213,11 @@ def enter_state(fsm, new_state):
         )
         return
 
-    if new_state == STATE_HORIZONTAL_BALANCE:
-        log_event(
-            "state",
-            "Starting horizontal balance: equalize left and right group margins.",
-            throttle_seconds=0.0,
-        )
-        return
-
     if new_state == STATE_VERTICAL_FIX:
         fsm.state_data["target_tilt"] = _compute_vertical_fix_target(fsm.state_data)
         log_event(
             "angle",
             f"Vertical fix target computed -> tilt={fsm.state_data['target_tilt']:.1f}",
-            throttle_seconds=0.0,
-        )
-        return
-
-    if new_state == STATE_VERTICAL_BALANCE:
-        log_event(
-            "state",
-            "Starting vertical balance: move average face center to one-third from top.",
             throttle_seconds=0.0,
         )
         return

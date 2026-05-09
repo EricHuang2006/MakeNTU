@@ -4,34 +4,34 @@ from event_logger import log_event
 from fsm_output import build_adjustment_status, build_motor_command
 from fsm_state_actions import update_failure, update_photo_capture
 from fsm_state_idle import (
-    update_auto_control,
     update_manual_control,
+    update_mode_select,
+    update_multi_mode_auto,
     update_setting,
+    update_single_mode_auto,
     update_stepper_position,
 )
 from fsm_state_lifecycle import build_state_data, enter_state
 from fsm_state_tracking import (
     update_frame_balance,
-    update_horizontal_balance,
     update_horizontal_fix,
     update_horizontal_sweep,
-    update_vertical_balance,
     update_vertical_fix,
     update_vertical_sweep,
 )
 from fsm_states import (
-    STATE_AUTO_CONTROL,
     STATE_FAILURE,
     STATE_FRAME_BALANCE,
-    STATE_HORIZONTAL_BALANCE,
     STATE_HORIZONTAL_FIX,
     STATE_HORIZONTAL_SWEEP,
     STATE_MANUAL_CONTROL,
+    STATE_MODE_SELECT,
+    STATE_MULTI_MODE_AUTO,
     STATE_PHOTO_CAPTURE,
     STATE_SETTING,
+    STATE_SINGLE_MODE_AUTO,
     STATE_STEPPER_POSITION,
     STATE_VERTICAL_FIX,
-    STATE_VERTICAL_BALANCE,
     STATE_VERTICAL_SWEEP,
 )
 from rig_api import DummyRigApi
@@ -39,15 +39,15 @@ from rig_api import DummyRigApi
 
 STATE_HANDLERS = {
     STATE_SETTING: update_setting,
+    STATE_MODE_SELECT: update_mode_select,
+    STATE_SINGLE_MODE_AUTO: update_single_mode_auto,
+    STATE_MULTI_MODE_AUTO: update_multi_mode_auto,
     STATE_MANUAL_CONTROL: update_manual_control,
-    STATE_AUTO_CONTROL: update_auto_control,
     STATE_STEPPER_POSITION: update_stepper_position,
     STATE_HORIZONTAL_SWEEP: update_horizontal_sweep,
     STATE_HORIZONTAL_FIX: update_horizontal_fix,
-    STATE_HORIZONTAL_BALANCE: update_horizontal_balance,
     STATE_VERTICAL_SWEEP: update_vertical_sweep,
     STATE_VERTICAL_FIX: update_vertical_fix,
-    STATE_VERTICAL_BALANCE: update_vertical_balance,
     STATE_FRAME_BALANCE: update_frame_balance,
     STATE_FAILURE: update_failure,
     STATE_PHOTO_CAPTURE: update_photo_capture,
@@ -78,6 +78,8 @@ class CameraRigFSM:
             "FSM idle",
         )
         self.debug_problems = ["FSM idle"]
+        self.control_mode = None
+        self.stepper_position_cm = 0.0
         self.auto_sequence = {
             "active": False,
             "photo_index": 0,
@@ -130,14 +132,8 @@ class CameraRigFSM:
         }
         self.initialized = False
 
-    def request_capture(self):
-        self.api.request_capture()
-
-    def request_manual_mode(self):
-        self.api.request_manual_mode()
-
-    def request_auto_mode(self):
-        self.api.request_auto_mode()
+    def request_mode_selection(self, mode_number):
+        self.api.request_mode_selection(mode_number)
 
     def switch_state(self, new_state):
         previous_state = self.state
@@ -149,18 +145,13 @@ class CameraRigFSM:
             self.failure_source_state = None
         self.state = new_state
         self.state_started_at = time.monotonic()
-        self.state_data = build_state_data(previous_state_data, self.current_angles, new_state)
+        self.state_data = build_state_data(previous_state_data, self.current_angles, new_state, self)
         self.debug_problems = [f"state={new_state}"]
         enter_state(self, new_state)
 
     def update(self, context):
         if not self.initialized:
             raise RuntimeError("CameraRigFSM.init() must be called before update().")
-
-        if self.api.consume_manual_mode_request(context):
-            self.switch_state(STATE_MANUAL_CONTROL)
-        elif self.api.consume_auto_mode_request(context) and self.state != STATE_AUTO_CONTROL:
-            self.switch_state(STATE_AUTO_CONTROL)
 
         handler = STATE_HANDLERS.get(self.state)
         if handler is None:
@@ -183,8 +174,6 @@ class CameraRigFSM:
         quality_score = min(100, people_count * 30)
         photo_good = self.state in (
             STATE_VERTICAL_FIX,
-            STATE_VERTICAL_BALANCE,
-            STATE_HORIZONTAL_BALANCE,
             STATE_FRAME_BALANCE,
             STATE_PHOTO_CAPTURE,
         )
