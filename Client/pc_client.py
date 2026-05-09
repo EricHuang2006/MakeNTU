@@ -1,71 +1,80 @@
-import cv2
 import socket
 import struct
+import time
+
+import cv2
 import numpy as np
 
-# ==========================================
-# Configuration
-# ==========================================
-# Replace with your i.MX 93's actual IP address
-# You can find it by typing 'ifconfig' on the i.MX 93 terminal
-# IMX93_IP = '192.168.0.73' 
-IMX93_IP = '172.20.10.4' 
+
+IMX93_IP = "10.27.106.155"
 PORT = 9999
+RECONNECT_DELAY_SECONDS = 1.0
+SOCKET_TIMEOUT_SECONDS = 5.0
+HEADER_SIZE = struct.calcsize("Q")
+WINDOW_NAME = "MakeNTU - i.MX 93 Face Tracking Live View"
 
-# ==========================================
-# Network Initialization
-# ==========================================
-client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-print(f"Connecting to i.MX 93 at {IMX93_IP}:{PORT}...")
 
-try:
+def connect_to_server():
+    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    client_socket.settimeout(SOCKET_TIMEOUT_SECONDS)
+    print(f"Connecting to i.MX 93 at {IMX93_IP}:{PORT}...")
     client_socket.connect((IMX93_IP, PORT))
     print("Connected! Receiving video stream...")
-except Exception as e:
-    print(f"Connection failed: {e}")
-    exit()
+    return client_socket
 
-data = b""
-# 'Q' specifies an 8-byte unsigned long long (must match the server)
-payload_size = struct.calcsize("Q") 
 
-# ==========================================
-# Main Display Loop
-# ==========================================
-try:
+def recv_exact(client_socket, expected_size):
+    chunks = bytearray()
+    while len(chunks) < expected_size:
+        packet = client_socket.recv(min(4096, expected_size - len(chunks)))
+        if not packet:
+            raise ConnectionError("Server closed the connection.")
+        chunks.extend(packet)
+    return bytes(chunks)
+
+
+def receive_frame(client_socket):
+    packed_msg_size = recv_exact(client_socket, HEADER_SIZE)
+    msg_size = struct.unpack("Q", packed_msg_size)[0]
+    if msg_size <= 0:
+        raise ValueError(f"Invalid frame size: {msg_size}")
+
+    frame_data = recv_exact(client_socket, msg_size)
+    img_np = np.frombuffer(frame_data, dtype=np.uint8)
+    frame = cv2.imdecode(img_np, cv2.IMREAD_COLOR)
+    if frame is None:
+        raise ValueError("Failed to decode JPEG frame.")
+    return frame
+
+
+def main():
     while True:
-        # Retrieve the message size (first 8 bytes)
-        while len(data) < payload_size:
-            packet = client_socket.recv(4*1024)
-            if not packet: break
-            data += packet
+        client_socket = None
+        try:
+            client_socket = connect_to_server()
 
-        if not data: break
-        
-        packed_msg_size = data[:payload_size]
-        data = data[payload_size:]
-        msg_size = struct.unpack("Q", packed_msg_size)[0]
+            while True:
+                frame = receive_frame(client_socket)
+                cv2.imshow(WINDOW_NAME, frame)
 
-        # Retrieve the image data based on the extracted size
-        while len(data) < msg_size:
-            data += client_socket.recv(4*1024)
+                if cv2.waitKey(1) & 0xFF == ord("q"):
+                    print("Stream closed by user.")
+                    return
 
-        frame_data = data[:msg_size]
-        data = data[msg_size:]
+        except KeyboardInterrupt:
+            print("Stream closed by user.")
+            return
+        except Exception as exc:
+            print(f"Stream interrupted: {exc}")
+            print(f"Reconnecting in {RECONNECT_DELAY_SECONDS:.1f} second(s)...")
+            time.sleep(RECONNECT_DELAY_SECONDS)
+        finally:
+            if client_socket is not None:
+                client_socket.close()
 
-        # Decode JPEG bytes back into a numpy array / OpenCV frame
-        img_np = np.frombuffer(frame_data, dtype=np.uint8)
-        frame = cv2.imdecode(img_np, cv2.IMREAD_COLOR)
 
-        if frame is not None:
-            cv2.imshow("MakeNTU - i.MX 93 Face Tracking Live View", frame)
-
-        # Press 'q' on the keyboard to exit the stream
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-
-except KeyboardInterrupt:
-    print("Stream closed by user.")
-finally:
-    client_socket.close()
-    cv2.destroyAllWindows()
+if __name__ == "__main__":
+    try:
+        main()
+    finally:
+        cv2.destroyAllWindows()
