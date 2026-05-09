@@ -37,13 +37,17 @@ from tracking_geometry import (
 def update_horizontal_sweep(fsm, context):
     scan_angles = fsm.state_data["scan_angles"]
     target_pan = fsm.state_data["target_pan"]
+    target_tilt = fsm.state_data.get("target_tilt", fsm.current_angles["tilt"])
 
-    if not angles_reached(fsm.current_angles["pan"], target_pan):
+    if (
+        not angles_reached(fsm.current_angles["pan"], target_pan) or
+        not angles_reached(fsm.current_angles["tilt"], target_tilt)
+    ):
         return build_motor_command(
             target_pan,
-            fsm.current_angles["tilt"],
+            target_tilt,
             fsm.current_angles["height"],
-            f"HORIZONTAL_SWEEP: moving to pan={target_pan:.1f}",
+            f"HORIZONTAL_SWEEP: moving to pan={target_pan:.1f}, tilt={target_tilt:.1f}",
         )
 
     if not fsm.state_data["sweep_started"]:
@@ -52,17 +56,17 @@ def update_horizontal_sweep(fsm, context):
         log_event("state", "Horizontal sweep reached 0 degrees. Starting person detection sweep.", throttle_seconds=0.0)
         return build_motor_command(
             target_pan,
-            fsm.current_angles["tilt"],
+            target_tilt,
             fsm.current_angles["height"],
-            f"HORIZONTAL_SWEEP: settle at pan={target_pan:.1f}",
+            f"HORIZONTAL_SWEEP: settle at pan={target_pan:.1f}, tilt={target_tilt:.1f}",
         )
 
     if time.monotonic() < fsm.state_data["settle_until"]:
         return build_motor_command(
             target_pan,
-            fsm.current_angles["tilt"],
+            target_tilt,
             fsm.current_angles["height"],
-            f"HORIZONTAL_SWEEP: waiting at pan={target_pan:.1f}",
+            f"HORIZONTAL_SWEEP: waiting at pan={target_pan:.1f}, tilt={target_tilt:.1f}",
         )
 
     if LOG_NOW_ANGLE:
@@ -233,7 +237,7 @@ def update_horizontal_sweep(fsm, context):
     ]
     return build_motor_command(
         fsm.state_data["target_pan"],
-        fsm.current_angles["tilt"],
+        target_tilt,
         fsm.current_angles["height"],
         f"HORIZONTAL_SWEEP: scanning pan={fsm.current_angles['pan']:.1f}",
     )

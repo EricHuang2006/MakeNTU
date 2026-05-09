@@ -77,9 +77,14 @@ class CameraRigFSM:
             "photo_index": 0,
             "photo_count": 3,
             "step_cm": 7.0,
-            "retry_used": False,
-            "abort_on_failure": False,
+            "height_positioned_index": None,
+            "recovery_photo_index": None,
+            "adjustment_retry_used": {},
+            "vertical_backed_to_horizontal": False,
+            "next_photo_start_horizontal": False,
+            "reset_tilt_before_horizontal": False,
         }
+        self.failure_source_state = None
 
     def init(self):
         if self.initialized:
@@ -125,6 +130,10 @@ class CameraRigFSM:
         previous_state = self.state
         previous_state_data = self.state_data
         log_event("state", f"State Transition: {previous_state} -> {new_state}", throttle_seconds=0.0)
+        if new_state == STATE_FAILURE:
+            self.failure_source_state = previous_state
+        elif previous_state == STATE_FAILURE:
+            self.failure_source_state = None
         self.state = new_state
         self.state_started_at = time.monotonic()
         self.state_data = build_state_data(previous_state_data, self.current_angles, new_state)

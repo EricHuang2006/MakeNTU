@@ -2,61 +2,26 @@ import time
 
 from event_logger import log_event
 from fsm_output import build_motor_command
-from fsm_states import STATE_AUTO_CONTROL, STATE_STEPPER_POSITION
+from fsm_states import (
+    STATE_AUTO_CONTROL,
+    STATE_HORIZONTAL_BALANCE,
+    STATE_HORIZONTAL_FIX,
+    STATE_HORIZONTAL_SWEEP,
+    STATE_STEPPER_POSITION,
+    STATE_VERTICAL_FIX,
+    STATE_VERTICAL_SWEEP,
+)
+
+
+HORIZONTAL_STATES = {STATE_HORIZONTAL_SWEEP, STATE_HORIZONTAL_FIX}
+VERTICAL_STATES = {STATE_VERTICAL_SWEEP, STATE_VERTICAL_FIX, STATE_HORIZONTAL_BALANCE}
 
 
 def update_failure(fsm, _context):
     if time.monotonic() >= fsm.state_data["timeout_at"]:
         sequence = getattr(fsm, "auto_sequence", {})
         if sequence.get("active"):
-            photo_index = int(sequence.get("photo_index", 0))
-            photo_count = int(sequence.get("photo_count", 1))
-
-            if sequence.get("abort_on_failure"):
-                log_event(
-                    "state",
-                    "Failure timeout completed. Aborting auto sequence for hardware safety.",
-                    throttle_seconds=0.0,
-                )
-                sequence["active"] = False
-                sequence["abort_on_failure"] = False
-                fsm.switch_state(STATE_AUTO_CONTROL)
-                return fsm.last_command
-
-            if not sequence.get("retry_used", False):
-                sequence["retry_used"] = True
-                log_event(
-                    "state",
-                    (
-                        "Failure timeout completed. Retrying current auto sequence photo "
-                        f"{photo_index + 1}/{photo_count} once."
-                    ),
-                    throttle_seconds=0.0,
-                )
-                fsm.switch_state(STATE_STEPPER_POSITION)
-                return fsm.last_command
-
-            sequence["photo_index"] = photo_index + 1
-            sequence["retry_used"] = False
-            if sequence["photo_index"] < photo_count:
-                log_event(
-                    "state",
-                    (
-                        "Retry failed. Skipping to next auto sequence photo "
-                        f"{sequence['photo_index'] + 1}/{photo_count}."
-                    ),
-                    throttle_seconds=0.0,
-                )
-                fsm.switch_state(STATE_STEPPER_POSITION)
-                return fsm.last_command
-
-            sequence["active"] = False
-            log_event(
-                "state",
-                "Retry failed on final auto sequence photo. Returning to AUTO_CONTROL.",
-                throttle_seconds=0.0,
-            )
-            fsm.switch_state(STATE_AUTO_CONTROL)
+            _recover_auto_sequence_failure(fsm, sequence)
             return fsm.last_command
 
         log_event("state", "Failure timeout completed. Returning to AUTO_CONTROL.", throttle_seconds=0.0)
@@ -70,6 +35,141 @@ def update_failure(fsm, _context):
         "FAILURE: blinking red light and waiting 5 seconds",
         error="failure_timeout",
     )
+
+
+def _recover_auto_sequence_failure(fsm, sequence):
+    photo_index = int(sequence.get("photo_index", 0))
+    _ensure_recovery_data_for_photo(sequence, photo_index)
+
+    failed_adjustment = _adjustment_for_state(fsm.failure_source_state)
+    photo_count = int(sequence.get("photo_count", 1))
+
+    if failed_adjustment is None:
+        log_event(
+            "state",
+            (
+                "Failure timeout completed from unknown adjustment. "
+                f"Skipping auto sequence photo {photo_index + 1}/{photo_count}."
+            ),
+            throttle_seconds=0.0,
+        )
+        _skip_current_photo(fsm, sequence)
+        return
+
+    retries = sequence["adjustment_retry_used"]
+    if not retries.get(failed_adjustment, False):
+        retries[failed_adjustment] = True
+        retry_state = _start_state_for_adjustment(failed_adjustment)
+        log_event(
+            "state",
+            (
+                f"Failure timeout completed. Retrying {failed_adjustment} adjustment "
+                f"for auto sequence photo {photo_index + 1}/{photo_count} once."
+            ),
+            throttle_seconds=0.0,
+        )
+        fsm.switch_state(retry_state)
+        return
+
+    if failed_adjustment == "vertical" and not sequence.get("vertical_backed_to_horizontal", False):
+        sequence["vertical_backed_to_horizontal"] = True
+        sequence["reset_tilt_before_horizontal"] = True
+        retries["horizontal"] = False
+        retries["vertical"] = False
+        log_event(
+            "state",
+            (
+                "Vertical adjustment failed after retry. Backing up to horizontal "
+                f"adjustment for photo {photo_index + 1}/{photo_count} after resetting tilt."
+            ),
+            throttle_seconds=0.0,
+        )
+        fsm.switch_state(STATE_HORIZONTAL_SWEEP)
+        return
+
+    log_event(
+        "state",
+        (
+            f"{failed_adjustment.capitalize()} adjustment failed after retry. "
+            f"Skipping auto sequence photo {photo_index + 1}/{photo_count}."
+        ),
+        throttle_seconds=0.0,
+    )
+    _skip_current_photo(fsm, sequence, failed_adjustment)
+
+
+def _adjustment_for_state(state):
+    if state == STATE_STEPPER_POSITION:
+        return "height"
+    if state in HORIZONTAL_STATES:
+        return "horizontal"
+    if state in VERTICAL_STATES:
+        return "vertical"
+    return None
+
+
+def _start_state_for_adjustment(adjustment):
+    if adjustment == "height":
+        return STATE_STEPPER_POSITION
+    if adjustment == "horizontal":
+        return STATE_HORIZONTAL_SWEEP
+    if adjustment == "vertical":
+        return STATE_VERTICAL_SWEEP
+    return STATE_STEPPER_POSITION
+
+
+def _skip_current_photo(fsm, sequence, failed_adjustment=None):
+    photo_index = int(sequence.get("photo_index", 0))
+    photo_count = int(sequence.get("photo_count", 1))
+    sequence["photo_index"] = photo_index + 1
+    sequence["adjustment_retry_used"] = {}
+    sequence["vertical_backed_to_horizontal"] = False
+    if failed_adjustment == "horizontal":
+        sequence["next_photo_start_horizontal"] = True
+
+    if sequence["photo_index"] < photo_count:
+        next_start = "horizontal" if sequence.get("next_photo_start_horizontal", False) else "vertical"
+        log_event(
+            "state",
+            (
+                "Proceeding to next height after failed adjustment "
+                f"({sequence['photo_index'] + 1}/{photo_count}); "
+                f"next adjustment starts at {next_start}."
+            ),
+            throttle_seconds=0.0,
+        )
+        fsm.switch_state(STATE_STEPPER_POSITION)
+        return
+
+    sequence["active"] = False
+    log_event(
+        "state",
+        "Final auto sequence height failed. Returning to AUTO_CONTROL.",
+        throttle_seconds=0.0,
+    )
+    fsm.switch_state(STATE_AUTO_CONTROL)
+
+
+def _ensure_recovery_data_for_photo(sequence, index):
+    if sequence.get("recovery_photo_index") == index:
+        sequence.setdefault("adjustment_retry_used", {})
+        sequence["adjustment_retry_used"].setdefault("height", False)
+        sequence["adjustment_retry_used"].setdefault("horizontal", False)
+        sequence["adjustment_retry_used"].setdefault("vertical", False)
+        sequence.setdefault("vertical_backed_to_horizontal", False)
+        sequence.setdefault("next_photo_start_horizontal", False)
+        sequence.setdefault("reset_tilt_before_horizontal", False)
+        return
+
+    sequence["recovery_photo_index"] = index
+    sequence["adjustment_retry_used"] = {
+        "height": False,
+        "horizontal": False,
+        "vertical": False,
+    }
+    sequence["vertical_backed_to_horizontal"] = False
+    sequence.setdefault("next_photo_start_horizontal", False)
+    sequence.setdefault("reset_tilt_before_horizontal", False)
 
 
 def update_photo_capture(fsm, context):
@@ -113,7 +213,10 @@ def update_photo_capture(fsm, context):
     sequence = getattr(fsm, "auto_sequence", {})
     if sequence.get("active"):
         sequence["photo_index"] = int(sequence.get("photo_index", 0)) + 1
-        sequence["retry_used"] = False
+        sequence["adjustment_retry_used"] = {}
+        sequence["vertical_backed_to_horizontal"] = False
+        sequence["next_photo_start_horizontal"] = False
+        sequence["reset_tilt_before_horizontal"] = False
         if sequence["photo_index"] < int(sequence.get("photo_count", 1)):
             log_event(
                 "state",

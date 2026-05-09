@@ -49,8 +49,12 @@ def update_auto_control(fsm, context):
             "photo_index": 0,
             "photo_count": photo_count,
             "step_cm": float(STEPPER_ROD_LENGTH_CM) / max(1, photo_count),
-            "retry_used": False,
-            "abort_on_failure": False,
+            "height_positioned_index": None,
+            "recovery_photo_index": None,
+            "adjustment_retry_used": {},
+            "vertical_backed_to_horizontal": False,
+            "next_photo_start_horizontal": False,
+            "reset_tilt_before_horizontal": False,
         }
         log_event(
             "state",
@@ -74,7 +78,7 @@ def update_auto_control(fsm, context):
 
 def update_stepper_position(fsm, context):
     if fsm.state_data["position_started"]:
-        next_state = STATE_HORIZONTAL_SWEEP if fsm.auto_sequence["photo_index"] == 0 else STATE_VERTICAL_SWEEP
+        next_state = _first_adjustment_state(fsm.auto_sequence)
         fsm.switch_state(next_state)
         return fsm.last_command
 
@@ -83,6 +87,21 @@ def update_stepper_position(fsm, context):
     step_cm = float(fsm.auto_sequence["step_cm"])
     target_cm = index * step_cm
     fsm.state_data["target_cm"] = target_cm
+    _ensure_recovery_data_for_photo(fsm.auto_sequence, index)
+
+    if fsm.auto_sequence.get("height_positioned_index") == index:
+        log_event(
+            "motor",
+            (
+                f"Stepper already positioned for photo {index + 1}/{total}; "
+                "redoing downstream adjustment without moving z axis."
+            ),
+            throttle_seconds=0.0,
+        )
+        fsm.state_data["position_started"] = True
+        next_state = _first_adjustment_state(fsm.auto_sequence)
+        fsm.switch_state(next_state)
+        return fsm.last_command
 
     try:
         if index == 0:
@@ -119,11 +138,37 @@ def update_stepper_position(fsm, context):
             )
     except Exception as exc:
         log_event("error", f"Stepper positioning failed: {exc}", throttle_seconds=0.0)
-        fsm.auto_sequence["abort_on_failure"] = True
         fsm.switch_state(STATE_FAILURE)
         return fsm.last_command
 
+    fsm.auto_sequence["height_positioned_index"] = index
     fsm.state_data["position_started"] = True
-    next_state = STATE_HORIZONTAL_SWEEP if index == 0 else STATE_VERTICAL_SWEEP
+    next_state = _first_adjustment_state(fsm.auto_sequence)
     fsm.switch_state(next_state)
     return fsm.last_command
+
+
+def _ensure_recovery_data_for_photo(sequence, index):
+    if sequence.get("recovery_photo_index") == index:
+        return
+
+    sequence["recovery_photo_index"] = index
+    sequence["adjustment_retry_used"] = {
+        "height": False,
+        "horizontal": False,
+        "vertical": False,
+    }
+    sequence["vertical_backed_to_horizontal"] = False
+
+
+def _first_adjustment_state(sequence):
+    index = int(sequence.get("photo_index", 0))
+    if index == 0:
+        sequence["next_photo_start_horizontal"] = False
+        return STATE_HORIZONTAL_SWEEP
+
+    if sequence.get("next_photo_start_horizontal", False):
+        sequence["next_photo_start_horizontal"] = False
+        return STATE_HORIZONTAL_SWEEP
+
+    return STATE_VERTICAL_SWEEP

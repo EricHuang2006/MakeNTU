@@ -103,8 +103,12 @@ def enter_state(fsm, new_state):
         fsm.auto_sequence["photo_index"] = 0
         fsm.auto_sequence["photo_count"] = int(STEPPER_PHOTO_COUNT)
         fsm.auto_sequence["step_cm"] = float(STEPPER_ROD_LENGTH_CM) / max(1, int(STEPPER_PHOTO_COUNT))
-        fsm.auto_sequence["retry_used"] = False
-        fsm.auto_sequence["abort_on_failure"] = False
+        fsm.auto_sequence["height_positioned_index"] = None
+        fsm.auto_sequence["recovery_photo_index"] = None
+        fsm.auto_sequence["adjustment_retry_used"] = {}
+        fsm.auto_sequence["vertical_backed_to_horizontal"] = False
+        fsm.auto_sequence["next_photo_start_horizontal"] = False
+        fsm.auto_sequence["reset_tilt_before_horizontal"] = False
         fsm.api.set_light("blue", pattern="solid")
         if hasattr(fsm.motor_rig, "center"):
             fsm.motor_rig.center()
@@ -137,6 +141,17 @@ def enter_state(fsm, new_state):
         fsm.api.notify_capture_trigger("pose_detected")
         fsm.state_data["sweep_started"] = False
         fsm.state_data["settle_until"] = 0.0
+        if fsm.auto_sequence.get("reset_tilt_before_horizontal", False):
+            fsm.state_data["target_tilt"] = fsm.default_angles["tilt"]
+            fsm.auto_sequence["reset_tilt_before_horizontal"] = False
+            log_event(
+                "angle",
+                (
+                    "Resetting tilt to default before horizontal sweep: "
+                    f"tilt={fsm.state_data['target_tilt']:.1f}"
+                ),
+                throttle_seconds=0.0,
+            )
         log_event("state", "Starting horizontal sweep: rotate from 90 to 0 without detection.", throttle_seconds=0.0)
         return
 
