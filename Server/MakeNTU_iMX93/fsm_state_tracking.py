@@ -22,6 +22,7 @@ from tracking_geometry import (
     rightmost_target_has_right_frame,
     select_centered_body_target,
     select_centered_face_target,
+    select_nearest_body_target,
     select_top_edge_face_target,
 )
 
@@ -76,11 +77,12 @@ def update_horizontal_sweep(fsm, context):
     if body_targets:
         log_event(
             "detect",
-            "Horizontal sweep detected a valid person.",
-            throttle_key="horizontal_sweep_detect",
+            f"Horizontal sweep sees {len(body_targets)} valid body target(s).",
+            throttle_key=f"horizontal_sweep_detect_{len(body_targets)}",
         )
 
     centered_body_target = select_centered_body_target(body_targets, context["IMG_SIZE"])
+    nearest_body_target = select_nearest_body_target(body_targets, context["IMG_SIZE"])
     candidate_angles = []
 
     if centered_body_target is not None:
@@ -93,6 +95,47 @@ def update_horizontal_sweep(fsm, context):
             ),
             throttle_key="horizontal_center_hit",
         )
+        fsm.state_data["pending_body_candidate_angle"] = None
+        fsm.state_data["pending_body_candidate_offset"] = None
+        fsm.state_data["pending_body_candidate_signed_offset"] = None
+    elif nearest_body_target is not None:
+        previous_angle = fsm.state_data["pending_body_candidate_angle"]
+        previous_offset = fsm.state_data["pending_body_candidate_offset"]
+        previous_signed_offset = fsm.state_data["pending_body_candidate_signed_offset"]
+        current_offset = float(nearest_body_target["offset"])
+        current_signed_offset = float(nearest_body_target["signed_offset"])
+
+        if (
+            previous_angle is not None and
+            previous_offset is not None and
+            previous_signed_offset is not None
+        ):
+            crossed_center = (previous_signed_offset <= 0.0 < current_signed_offset) or (
+                previous_signed_offset >= 0.0 > current_signed_offset
+            )
+            moving_away = current_offset > previous_offset
+            close_enough = previous_offset <= max(12.0, context["IMG_SIZE"] * 0.06)
+
+            if close_enough and (crossed_center or moving_away):
+                candidate_angles = [float(previous_angle)]
+                log_event(
+                    "detect",
+                    (
+                        "Body center crossing inferred near frame center "
+                        f"at pan={float(previous_angle):.1f}, "
+                        f"best_offset={float(previous_offset):.1f}px"
+                    ),
+                    throttle_key=f"horizontal_crossing_{float(previous_angle):.1f}",
+                    throttle_seconds=0.0,
+                )
+
+        fsm.state_data["pending_body_candidate_angle"] = float(fsm.current_angles["pan"])
+        fsm.state_data["pending_body_candidate_offset"] = current_offset
+        fsm.state_data["pending_body_candidate_signed_offset"] = current_signed_offset
+    else:
+        fsm.state_data["pending_body_candidate_angle"] = None
+        fsm.state_data["pending_body_candidate_offset"] = None
+        fsm.state_data["pending_body_candidate_signed_offset"] = None
 
     new_angles = register_unique_angles(
         fsm.state_data["recorded_angles"],
@@ -193,6 +236,7 @@ def update_horizontal_fix(fsm, _context):
     target_pan = clamp_angle(fsm.state_data["target_pan"])
 
     if angles_reached(fsm.current_angles["pan"], target_pan):
+        print(f"Horizontal fix reached target pan angle {target_pan:.1f}. Transitioning to vertical sweep.")
         fsm.switch_state(STATE_VERTICAL_SWEEP)
         return fsm.last_command
 

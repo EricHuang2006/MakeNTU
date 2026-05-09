@@ -149,8 +149,8 @@ class CameraServoRig:
     def reset_all(self):
         if not self.enabled:
             return
-        for servo in self.servos:
-            servo.set_angle(servo.center)
+        self.pan(self.pan1.center)
+        self.tilt(self.tilt1.center)
         log_event(
             "motor",
             (
@@ -174,35 +174,29 @@ class CameraServoRig:
     def pan(self, angle):
         if not self.enabled:
             return
-        safe_angle = self._clamp_relative_angle(self.pan1, angle, PAN_MAX_DELTA)
-        if safe_angle != angle:
-            log_event(
-                "motor",
-                f"Pan command clamped from {float(angle):.1f} to {safe_angle:.1f}",
-                throttle_key=f"pan_clamp_{safe_angle:.1f}",
-                throttle_seconds=0.0,
-            )
-        self.pan1.set_angle(safe_angle)
-        self.current["pan"] = safe_angle
+        angle = self._clamp_relative_angle(self.pan1, angle, PAN_MAX_DELTA)
+        while self.current["pan"] != angle:
+            delta = min(2.0, abs(self.current["pan"] - angle))
+            delta = delta if angle > self.current["pan"] else -delta
+            to = self.current["pan"] + delta
+            self.pan1.set_angle(to)
+            self.current["pan"] += delta
+            time.sleep(0.025)
 
     def tilt(self, angle):
         if not self.enabled:
             return
-        safe_angle = self._clamp_relative_angle(self.tilt1, angle, TILT_MAX_DELTA)
-        if safe_angle != angle:
-            log_event(
-                "motor",
-                f"Tilt command clamped from {float(angle):.1f} to {safe_angle:.1f}",
-                throttle_key=f"tilt_clamp_{safe_angle:.1f}",
-                throttle_seconds=0.0,
-            )
-        delta = safe_angle - self.tilt1.center
-        op = 0.9 if delta > 0 else 1.1
-        self.tilt1.set_angle(safe_angle)
-        paired_tilt = self.tilt2.center - (delta * op)
-        paired_tilt = self._clamp_relative_angle(self.tilt2, paired_tilt, TILT_MAX_DELTA)
-        self.tilt2.set_angle(paired_tilt)
-        self.current["tilt"] = safe_angle
+        angle = self._clamp_relative_angle(self.tilt1, angle, TILT_MAX_DELTA)
+        while self.current["tilt"] != angle:
+            delta = min(2.0, abs(self.current["tilt"] - angle))
+            delta = delta if angle > self.current["tilt"] else -delta
+            to = self.current["tilt"] + delta
+            dc = to - self.tilt1.center
+            self.tilt1.set_angle(to)
+            angle2 = self.tilt2.center - (dc * (0.9 if dc > 0 else 1.1))
+            self.tilt2.set_angle(angle2)
+            self.current["tilt"] += delta
+            time.sleep(0.025)
 
     def set_angles(self, pan=None, tilt=None, height=None):
         if pan is not None and abs(float(pan) - float(self.current["pan"])) > ANGLE_EPSILON:

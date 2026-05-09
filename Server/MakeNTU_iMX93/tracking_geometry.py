@@ -11,6 +11,7 @@ BODY_CENTER_TOLERANCE_PX = 6
 FACE_CENTER_TOLERANCE_PX = 6
 BODY_VISIBLE_MIN_KEYPOINTS = 5
 BODY_KEYPOINT_CONFIDENCE = 0.3
+BODY_BOX_KEYPOINT_INDICES = (0, 1, 2, 3, 4, 5, 6, 11, 12, 13, 14, 15, 16)
 
 
 def clamp_angle(angle):
@@ -77,6 +78,22 @@ def compute_body_center_x(keypoints, box, keypoint_conf=BODY_KEYPOINT_CONFIDENCE
     return x + (w / 2.0)
 
 
+def compute_body_bounds(keypoints, box, keypoint_conf=BODY_KEYPOINT_CONFIDENCE):
+    body_points = [
+        (x, y)
+        for idx, (x, y, conf) in enumerate(keypoints)
+        if idx in BODY_BOX_KEYPOINT_INDICES and conf > keypoint_conf
+    ]
+
+    if body_points:
+        xs = [x for x, _y in body_points]
+        ys = [y for _x, y in body_points]
+        return min(xs), min(ys), max(xs), max(ys)
+
+    x, y, w, h = box
+    return x, y, x + w, y + h
+
+
 def extract_body_targets(indices, boxes, all_keypoints, img_size, current_pan):
     targets = []
 
@@ -86,13 +103,15 @@ def extract_body_targets(indices, boxes, all_keypoints, img_size, current_pan):
         if visible_keypoints < BODY_VISIBLE_MIN_KEYPOINTS:
             continue
 
-        x, y, w, h = boxes[idx]
+        x1, y1, x2, y2 = compute_body_bounds(keypoints, boxes[idx])
         center_x = compute_body_center_x(keypoints, boxes[idx])
         targets.append(
             {
                 "center_x": center_x,
-                "left_x": x,
-                "right_x": x + w,
+                "left_x": x1,
+                "right_x": x2,
+                "top_y": y1,
+                "bottom_y": y2,
                 "centered_angle": clamp_angle(current_pan),
                 "visible_keypoints": visible_keypoints,
             }
@@ -118,6 +137,27 @@ def select_centered_body_target(targets, img_size, tolerance_px=BODY_CENTER_TOLE
 
     centered_targets.sort(key=lambda item: item[0])
     return centered_targets[0][1]
+
+
+def select_nearest_body_target(targets, img_size):
+    if not targets:
+        return None
+
+    frame_center_x = img_size / 2.0
+    nearest_targets = []
+
+    for target in targets:
+        center_offset = abs(target["center_x"] - frame_center_x)
+        signed_offset = target["center_x"] - frame_center_x
+        nearest_targets.append((center_offset, signed_offset, target))
+
+    nearest_targets.sort(key=lambda item: item[0])
+    offset, signed_offset, target = nearest_targets[0]
+    return {
+        "target": target,
+        "offset": offset,
+        "signed_offset": signed_offset,
+    }
 
 
 def extract_face_targets(face_boxes, img_size, current_tilt):

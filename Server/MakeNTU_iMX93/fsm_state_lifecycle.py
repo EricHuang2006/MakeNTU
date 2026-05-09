@@ -1,5 +1,6 @@
 import time
 
+from config import HORIZONTAL_FIX_RIGHT_OFFSET_DEGREES
 from event_logger import log_event
 from fsm_output import build_motor_command
 from fsm_states import (
@@ -29,6 +30,9 @@ def build_state_data(previous_state_data, current_angles, state):
             "left_entry_clear_seen_after_exit": False,
             "rightmost_angle": None,
             "leave_angle": None,
+            "pending_body_candidate_angle": None,
+            "pending_body_candidate_offset": None,
+            "pending_body_candidate_signed_offset": None,
             "target_pan": float(scan_angles[0]),
             "sweep_started": False,
             "settle_until": 0.0,
@@ -100,10 +104,15 @@ def enter_state(fsm, new_state):
     if new_state == STATE_HORIZONTAL_FIX:
         left_angle = min(fsm.state_data["recorded_angles"])
         right_angle = max(fsm.state_data["recorded_angles"])
-        fsm.state_data["target_pan"] = (left_angle + right_angle) / 2.0
+        midpoint = (left_angle + right_angle) / 2.0
+        fsm.state_data["target_pan"] = clamp_angle(midpoint + HORIZONTAL_FIX_RIGHT_OFFSET_DEGREES)
         log_event(
             "angle",
-            f"Horizontal fix target computed from l={left_angle:.1f}, r={right_angle:.1f} -> pan={fsm.state_data['target_pan']:.1f}",
+            (
+                f"Horizontal fix target computed from l={left_angle:.1f}, r={right_angle:.1f}, "
+                f"mid={midpoint:.1f}, right_offset={HORIZONTAL_FIX_RIGHT_OFFSET_DEGREES:.1f} "
+                f"-> pan={fsm.state_data['target_pan']:.1f}"
+            ),
             throttle_seconds=0.0,
         )
         return
