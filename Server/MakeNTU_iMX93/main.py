@@ -76,7 +76,7 @@ def initialize_socket():
 
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.bind((HOST_IP, PORT))
-    server_socket.listen(1)
+    server_socket.listen(5)
     server_socket.settimeout(0.01)
     log_event("system", f"PC stream server listening on port {PORT}", throttle_seconds=0.0)
     return server_socket
@@ -87,11 +87,7 @@ def accept_client_if_needed(server_socket, client_socket):
         return client_socket
 
     try:
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(certfile="server.crt", keyfile="server.key")
-        raw_client, addr = server_socket.accept()
-        client_socket = context.wrap_socket(raw_client, server_side=True)
-
+        client_socket, addr = server_socket.accept()
         client_socket.settimeout(1.0)
         log_event("system", f"PC connected from {addr}", throttle_seconds=0.0)
         return client_socket
@@ -99,9 +95,9 @@ def accept_client_if_needed(server_socket, client_socket):
         return None
 
 
-def stream_frame(client_socket, display_img):
-    if client_socket is None:
-        return None
+def stream_frame(client_sockets, display_img):
+    if not client_sockets:
+        return client_sockets
 
     ok, encoded_img = cv2.imencode(
         ".jpg",
@@ -110,17 +106,25 @@ def stream_frame(client_socket, display_img):
     )
     if not ok:
         log_event("error", "JPEG encoding failed.", throttle_seconds=0.0)
-        return client_socket
+        return client_sockets
 
-    try:
-        payload = encoded_img.tobytes()
-        size = struct.pack("Q", len(payload))
-        client_socket.sendall(size + payload)
-        return client_socket
-    except OSError as exc:
-        log_event("error", f"PC stream disconnected: {exc}", throttle_seconds=0.0)
-        client_socket.close()
-        return None
+    payload = encoded_img.tobytes()
+    size = struct.pack("Q", len(payload))
+    packet = size + payload
+    active_clients = []
+
+    for client_socket in client_sockets:
+        try:
+            client_socket.sendall(packet)
+            active_clients.append(client_socket)
+        except OSError as exc:
+            log_event("error", f"PC stream disconnected: {exc}", throttle_seconds=0.0)
+            try:
+                client_socket.close()
+            except OSError:
+                pass
+
+    return active_clients
 
 
 def apply_motor_output(motor_rig, motor_command):
@@ -177,7 +181,7 @@ def apply_motor_output(motor_rig, motor_command):
 
 def main():
     cap = None
-    client_socket = None
+    client_sockets = []
     server_socket = None
     cli_model_input = None
     uart_device = initialize_uart()
@@ -220,7 +224,7 @@ def main():
         log_event("system", "Camera opened successfully.", throttle_seconds=0.0)
 
         while cap.isOpened():
-            client_socket = accept_client_if_needed(server_socket, client_socket)
+            client_sockets = accept_pending_clients(server_socket, client_sockets)
 
             ret, frame = cap.read()
             if not ret:
@@ -375,7 +379,7 @@ def main():
                 adjustment=debug_view["adjustment"],
             )
             if fsm.state != STATE_FAILURE:
-                client_socket = stream_frame(client_socket, display_img)
+                client_sockets = stream_frame(client_sockets, display_img)
 
     except Exception as exc:
         log_event("error", f"Main loop stopped: {exc}", throttle_seconds=0.0)
@@ -392,8 +396,11 @@ def main():
 
         motor_rig.shutdown()
         stepper_axis.shutdown()
-        if client_socket is not None:
-            client_socket.close()
+        for client_socket in client_sockets:
+            try:
+                client_socket.close()
+            except OSError:
+                pass
         if server_socket is not None:
             server_socket.close()
         log_event("system", "Server shut down cleanly.", throttle_seconds=0.0)
