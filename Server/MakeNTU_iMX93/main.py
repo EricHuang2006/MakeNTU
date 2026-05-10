@@ -82,17 +82,15 @@ def initialize_socket():
     return server_socket
 
 
-def accept_client_if_needed(server_socket, client_socket):
-    if client_socket is not None:
-        return client_socket
-
-    try:
-        client_socket, addr = server_socket.accept()
-        client_socket.settimeout(1.0)
-        log_event("system", f"PC connected from {addr}", throttle_seconds=0.0)
-        return client_socket
-    except socket.timeout:
-        return None
+def accept_pending_clients(server_socket, client_sockets):
+    while True:
+        try:
+            client_socket, addr = server_socket.accept()
+            client_socket.settimeout(1.0)
+            client_sockets.append(client_socket)
+            log_event("system", f"PC connected from {addr}", throttle_seconds=0.0)
+        except socket.timeout:
+            return client_sockets
 
 
 def stream_frame(client_sockets, display_img):
