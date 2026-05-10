@@ -135,6 +135,23 @@ class CameraRigFSM:
     def request_mode_selection(self, mode_number):
         self.api.request_mode_selection(mode_number)
 
+    def cancel_current_option(self, reason):
+        log_event("state", f"Cancel requested: {reason}. Returning to SETTING.", throttle_seconds=0.0)
+        self.auto_sequence["active"] = False
+        self.auto_sequence["photo_index"] = 0
+        self.auto_sequence["last_photo_successful"] = False
+        self.auto_sequence["hybrid_balance_active"] = False
+        self.auto_sequence["hybrid_balance_for_photo"] = False
+        self.auto_sequence["hybrid_balance_failure_count"] = 0
+        self.auto_sequence["hybrid_fallback_requested"] = False
+        self.auto_sequence["adjustment_retry_used"] = {}
+        self.auto_sequence["vertical_backed_to_horizontal"] = False
+        self.auto_sequence["next_photo_start_horizontal"] = False
+        self.auto_sequence["reset_tilt_before_horizontal"] = False
+        self.control_mode = None
+        self.failure_source_state = None
+        self.switch_state(STATE_SETTING)
+
     def switch_state(self, new_state):
         previous_state = self.state
         previous_state_data = self.state_data

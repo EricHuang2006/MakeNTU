@@ -3,6 +3,7 @@ import serial
 import socket
 import struct
 import time
+import ssl
 
 from cli_model_input import CliModelInput
 from config import (
@@ -21,7 +22,12 @@ from config import (
 from drawing import draw_debug_view
 from event_logger import log_event, log_once_per_change
 from motor_control import CameraServoRig
-from pose_logic import analyze_people, classify_manual_gesture, classify_mode_selection_gesture
+from pose_logic import (
+    analyze_people,
+    classify_cancel_gesture,
+    classify_manual_gesture,
+    classify_mode_selection_gesture,
+)
 from stepper_axis_control import StepperAxisController
 from status import CameraRigFSM
 from vision import (
@@ -49,6 +55,12 @@ VERTICAL_FACE_ONLY_STATES = {
     STATE_PHOTO_CAPTURE,
 }
 
+CANCEL_GESTURE_IGNORED_STATES = {
+    STATE_FAILURE,
+    STATE_MODE_SELECT,
+    STATE_SETTING,
+}
+
 
 def initialize_uart():
     try:
@@ -61,6 +73,7 @@ def initialize_uart():
 
 
 def initialize_socket():
+
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.bind((HOST_IP, PORT))
     server_socket.listen(1)
@@ -74,7 +87,11 @@ def accept_client_if_needed(server_socket, client_socket):
         return client_socket
 
     try:
-        client_socket, addr = server_socket.accept()
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(certfile="server.crt", keyfile="server.key")
+        raw_client, addr = server_socket.accept()
+        client_socket = context.wrap_socket(raw_client, server_side=True)
+
         client_socket.settimeout(1.0)
         log_event("system", f"PC connected from {addr}", throttle_seconds=0.0)
         return client_socket
@@ -218,6 +235,7 @@ def main():
             face_boxes = []
             hand_sign = None
             manual_gesture = None
+            cancel_requested = False
             cli_inputs = cli_model_input.pop_frame_inputs() if cli_model_input is not None else {}
 
             if fsm.state not in (STATE_FAILURE, STATE_SETTING):
@@ -239,6 +257,21 @@ def main():
                     keypoint_conf=0.3,
                 )
                 face_boxes = pose_result["face_boxes"]
+                if fsm.state not in CANCEL_GESTURE_IGNORED_STATES:
+                    cancel_requested = classify_cancel_gesture(
+                        indices=indices,
+                        all_keypoints=all_keypoints,
+                        keypoint_conf=0.3,
+                    )
+                    log_once_per_change(
+                        "detect",
+                        "cancel_pose_gesture",
+                        cancel_requested,
+                        (
+                            "Cancel pose gesture detected: "
+                            f"{'left hand raised' if cancel_requested else 'none'}."
+                        ),
+                    )
                 if fsm.state == STATE_MODE_SELECT:
                     hand_sign = classify_mode_selection_gesture(
                         indices=indices,
@@ -284,6 +317,11 @@ def main():
             manual_gesture = cli_inputs.get("manual_gesture", manual_gesture)
             if "hand_sign" in cli_inputs:
                 fsm.request_mode_selection(cli_inputs["hand_sign"])
+
+            if cancel_requested:
+                fsm.cancel_current_option("left hand raised")
+                hand_sign = None
+                manual_gesture = None
 
             frame_counter += 1
             if fsm.state != STATE_HORIZONTAL_SWEEP and fsm.state != STATE_FAILURE:

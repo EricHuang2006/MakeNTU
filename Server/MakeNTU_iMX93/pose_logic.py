@@ -118,10 +118,10 @@ def classify_manual_gesture(indices, all_keypoints, keypoint_conf=0.3):
 
     thresholds = _gesture_thresholds(shoulder_width)
 
-    if _is_hand_straight_up(left_arm, thresholds, keypoint_conf):
-        return GESTURE_FINISH
     if _is_hand_straight_up(right_arm, thresholds, keypoint_conf):
         return GESTURE_FINISH
+    if _is_hand_straight_up(left_arm, thresholds, keypoint_conf):
+        return None
 
     if _upper_arm_is_horizontal_enough(left_arm, thresholds, keypoint_conf):
         if _is_l_lock(left_arm, "up", thresholds, keypoint_conf):
@@ -165,19 +165,38 @@ def classify_mode_selection_gesture(indices, all_keypoints, keypoint_conf=0.3):
 
     thresholds = _gesture_thresholds(shoulder_width)
 
-    if (
-        _is_hand_straight_up(left_arm, thresholds, keypoint_conf) or
-        _is_hand_straight_up(right_arm, thresholds, keypoint_conf)
-    ):
+    if _is_hand_straight_up(right_arm, thresholds, keypoint_conf):
         return 2
 
-    if _is_straight_horizontal(left_arm, thresholds, keypoint_conf, 50) and abs(left_arm["shoulder"][0] - left_arm["elbow"][0]) > thresholds["raised_x_tol"] * 1.5:
+    if _is_straight_horizontal(left_arm, thresholds, keypoint_conf, 50):
         return 1
 
-    if _is_straight_horizontal(right_arm, thresholds, keypoint_conf, 50) and abs(left_arm["shoulder"][0] - left_arm["elbow"][0]) > thresholds["raised_x_tol"] * 1.5:
+    if _is_straight_horizontal(right_arm, thresholds, keypoint_conf, 50):
         return 3
 
     return None
+
+
+def classify_cancel_gesture(indices, all_keypoints, keypoint_conf=0.3):
+    """
+    Return True when the person's anatomical left hand is raised straight up.
+    This is used as a global cancel signal for active modes.
+    """
+
+    if len(indices) == 0:
+        return False
+
+    best_kpts = _select_manual_control_person(indices, all_keypoints, keypoint_conf)
+    if best_kpts is None:
+        return False
+
+    left_arm = _arm_points(best_kpts, "left")
+    right_arm = _arm_points(best_kpts, "right")
+    shoulder_width = _distance(left_arm["shoulder"], right_arm["shoulder"], keypoint_conf)
+    if shoulder_width is None:
+        shoulder_width = 60.0
+
+    return _is_hand_straight_up(left_arm, _gesture_thresholds(shoulder_width), keypoint_conf)
 
 
 def _arm_points(kpts, side):

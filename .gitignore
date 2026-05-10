@@ -2,3 +2,6 @@
 .env
 __pycache__/
 *.py[cod]
+node_modules/
+*.crt
+service-account-key.json

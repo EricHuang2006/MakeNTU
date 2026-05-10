@@ -1,24 +1,29 @@
 import socket
 import struct
+import sys
 import time
+import ssl
+from pathlib import Path
 
 import cv2
 import numpy as np
 
 
-IMX93_IP = "10.27.106.155"
-PORT = 9999
+IMX93_IP = sys.argv[1] if len(sys.argv) > 1 else "172.20.10.4"
+PORT = int(sys.argv[2]) if len(sys.argv) > 2 else 9999
 RECONNECT_DELAY_SECONDS = 1.0
 SOCKET_TIMEOUT_SECONDS = 5.0
 HEADER_SIZE = struct.calcsize("Q")
-WINDOW_NAME = "MakeNTU - i.MX 93 Face Tracking Live View"
+WINDOW_NAME = "MakeNTU - i.MX 93 Live View"
 
 
 def connect_to_server():
-    client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    client_socket.settimeout(SOCKET_TIMEOUT_SECONDS)
+    cert_path = Path(__file__).resolve().parent / "server.crt"
+    context = ssl.create_default_context(cafile=str(cert_path))
     print(f"Connecting to i.MX 93 at {IMX93_IP}:{PORT}...")
-    client_socket.connect((IMX93_IP, PORT))
+    raw_sock = socket.create_connection((IMX93_IP, PORT), timeout=SOCKET_TIMEOUT_SECONDS)
+    client_socket = context.wrap_socket(raw_sock, server_hostname="makentu-imx93")
+    client_socket.settimeout(SOCKET_TIMEOUT_SECONDS)
     print("Connected! Receiving video stream...")
     return client_socket
 
