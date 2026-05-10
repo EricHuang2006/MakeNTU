@@ -1,137 +1,507 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MakeNTU Camera Control</title>
   <style>
-    :root { font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    body { margin: 0; background: #f6f7f9; color: #16181d; }
-    header { padding: 20px 28px; background: white; border-bottom: 1px solid #e2e5ea; }
-    h1 { margin: 0; font-size: 24px; }
-    main { display: grid; grid-template-columns: minmax(320px, 1fr) 380px; gap: 20px; padding: 20px; }
-    .card { background: white; border: 1px solid #e2e5ea; border-radius: 16px; padding: 18px; box-shadow: 0 8px 24px rgba(0,0,0,.05); }
-    .video-wrap { display: grid; place-items: center; min-height: 360px; background: #111; border-radius: 14px; overflow: hidden; }
-    img { width: 100%; max-height: 70vh; object-fit: contain; }
-    label { display: block; font-weight: 650; margin-top: 14px; margin-bottom: 6px; }
-    input, select { width: 100%; box-sizing: border-box; padding: 10px; border: 1px solid #ccd2dc; border-radius: 10px; font-size: 15px; }
-    input[type="checkbox"] { width: auto; }
-    .row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
-    .buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 18px; }
-    button { border: 0; border-radius: 12px; padding: 12px 14px; font-weight: 750; cursor: pointer; background: #1f6feb; color: white; }
-    button.secondary { background: #57606a; }
-    button.danger { background: #cf222e; }
-    button.photo { background: #116329; }
-    pre { white-space: pre-wrap; word-break: break-word; background: #f0f2f5; padding: 12px; border-radius: 12px; min-height: 120px; max-height: 330px; overflow: auto; }
-    .note { color: #57606a; font-size: 14px; margin-top: 8px; }
-    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>MakeNTU Camera Control</h1>
-    <div id="bridgeLine">Connecting...</div>
-    <div class="note">Photos are saved on the PC bridge in the <code>captures/</code> folder.</div>
-  </header>
-
-  <main>
-    <section class="card">
-      <h2>Live preview</h2>
-      <div class="video-wrap">
-        <img id="video" src="/video" alt="Live video stream" />
-      </div>
-    </section>
-
-    <section class="card">
-      <h2>Settings</h2>
-
-      <label for="mode">Mode</label>
-      <select id="mode">
-        <option value="full_body">Full body</option>
-        <option value="upper_body">Upper body</option>
-        <option value="gesture">Gesture</option>
-      </select>
-
-      <label for="interval">Photo interval, seconds</label>
-      <input id="interval" type="number" min="0.5" step="0.5" value="5" />
-
-      <label for="quality">JPEG quality</label>
-      <input id="quality" type="range" min="10" max="95" value="75" />
-      <div>Quality: <span id="qualityValue">75</span></div>
-
-      <label>
-        <input id="gestureMode" type="checkbox" /> Force gesture mode
-      </label>
-
-      <label>Servo</label>
-      <div class="row">
-        <input id="pan" type="number" step="1" value="0" placeholder="pan" />
-        <input id="tilt" type="number" step="1" value="0" placeholder="tilt" />
-        <input id="height" type="number" step="1" value="0" placeholder="height" />
-      </div>
-
-      <div class="buttons">
-        <button onclick="startCapture()">Start Auto Save</button>
-        <button class="danger" onclick="stopCapture()">Stop</button>
-        <button class="photo" onclick="takePhoto()">Take Photo</button>
-        <button class="secondary" onclick="saveSettings()">Save Settings</button>
-      </div>
-
-      <h2>Status</h2>
-      <pre id="status">Waiting for status...</pre>
-    </section>
-  </main>
-
-  <script>
-    const $ = (id) => document.getElementById(id);
-
-    $('quality').addEventListener('input', () => {
-      $('qualityValue').textContent = $('quality').value;
-    });
-
-    function currentSettings() {
-      return {
-        mode: $('mode').value,
-        photo_interval_sec: Number($('interval').value),
-        quality: Number($('quality').value),
-        gesture_mode: $('gestureMode').checked,
-        pan: Number($('pan').value),
-        tilt: Number($('tilt').value),
-        height: Number($('height').value),
-      };
+    :root {
+      color-scheme: light;
+      font-family: "Segoe UI", "Noto Sans TC", sans-serif;
+      --bg: #f4f0e8;
+      --card: rgba(255, 252, 246, 0.94);
+      --line: #ded6c8;
+      --ink: #1d1a17;
+      --muted: #6d6458;
+      --brand: #c55a11;
+      --brand-strong: #8f3c00;
+      --danger: #b42318;
+      --shadow: 0 16px 40px rgba(58, 41, 24, 0.12);
     }
 
-    async function postJson(url, body = {}) {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify(body),
-      });
-      const data = await response.json();
-      $('status').textContent = JSON.stringify(data, null, 2);
-      return data;
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top left, rgba(241, 196, 124, 0.24), transparent 28%),
+        radial-gradient(circle at top right, rgba(122, 169, 255, 0.18), transparent 22%),
+        linear-gradient(180deg, #f8f4ed 0%, var(--bg) 100%);
     }
 
-    async function startCapture() { await postJson('/api/start', currentSettings()); }
-    async function stopCapture() { await postJson('/api/stop'); }
-    async function takePhoto() { await postJson('/api/photo'); }
-    async function saveSettings() { await postJson('/api/settings', currentSettings()); }
+    .shell {
+      width: calc(100vw - 32px);
+      margin: 16px auto;
+      padding-bottom: 16px;
+    }
 
-    async function refreshStatus() {
-      try {
-        const combined = await fetch('/api/status').then(r => r.json());
-        const bridge = combined.bridge || {};
-        $('bridgeLine').textContent = bridge.video_connected
-          ? `Connected to board ${bridge.board_ip}:${bridge.video_port}; PC saves to ${bridge.capture_dir}; saved ${bridge.saved_count || 0}`
-          : `Video not connected: ${bridge.video_error || 'waiting'}`;
-        $('status').textContent = JSON.stringify(combined, null, 2);
-      } catch (err) {
-        $('status').textContent = String(err);
+    .hero {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid rgba(222, 214, 200, 0.9);
+      border-radius: 28px;
+      padding: 24px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+
+    .hero-top {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: flex-start;
+      flex-wrap: wrap;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(28px, 4vw, 42px);
+      line-height: 1;
+      letter-spacing: -0.03em;
+    }
+
+    .subtitle {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .status-pill {
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: #fff7ec;
+      border: 1px solid #f1d6b8;
+      color: var(--brand-strong);
+      font-weight: 700;
+      font-size: 14px;
+      white-space: nowrap;
+    }
+
+    .status-strip {
+      margin-top: 18px;
+      padding: 14px 16px;
+      border: 1px solid rgba(222, 214, 200, 0.9);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.55);
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .tabs {
+      margin-top: 22px;
+      display: inline-grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      padding: 8px;
+      border-radius: 18px;
+      background: rgba(233, 226, 215, 0.8);
+    }
+
+    .tab-btn {
+      border: 0;
+      border-radius: 14px;
+      padding: 14px 24px;
+      font-size: 16px;
+      font-weight: 800;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      transition: 0.18s ease;
+    }
+
+    .tab-btn.active {
+      background: linear-gradient(135deg, var(--brand) 0%, #e08a2d 100%);
+      color: white;
+      box-shadow: 0 10px 24px rgba(197, 90, 17, 0.26);
+      transform: translateY(-1px);
+    }
+
+    .panel {
+      display: none;
+      margin-top: 22px;
+      animation: fade-in 0.24s ease;
+    }
+
+    .panel.active {
+      display: block;
+    }
+
+    .photo-toolbar,
+    .live-toolbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 14px;
+      flex-wrap: wrap;
+      margin-bottom: 18px;
+    }
+
+    .section-title {
+      margin: 0;
+      font-size: 21px;
+    }
+
+    .section-note {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .ghost-btn {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-weight: 800;
+      cursor: pointer;
+      background: white;
+      color: var(--ink);
+      transition: transform 0.18s ease;
+    }
+
+    .ghost-btn:hover,
+    .tab-btn:hover {
+      transform: translateY(-1px);
+    }
+
+    .photo-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 16px;
+    }
+
+    .photo-card {
+      position: relative;
+      display: block;
+      overflow: hidden;
+      border-radius: 20px;
+      background: #efe7db;
+      border: 1px solid rgba(216, 205, 188, 0.9);
+      box-shadow: 0 10px 22px rgba(62, 48, 31, 0.08);
+    }
+
+    .photo-link {
+      display: block;
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .photo-thumb {
+      aspect-ratio: 1 / 1;
+      width: 100%;
+      object-fit: cover;
+      display: block;
+      background: linear-gradient(135deg, #f0ebe4 0%, #ded4c5 100%);
+    }
+
+    .photo-meta {
+      padding: 12px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.12) 0%, rgba(255,255,255,0.9) 24%, rgba(255,255,255,0.98) 100%);
+    }
+
+    .photo-name {
+      font-size: 13px;
+      font-weight: 700;
+      word-break: break-word;
+    }
+
+    .photo-size {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .delete-btn {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 34px;
+      height: 34px;
+      border: 0;
+      border-radius: 999px;
+      background: rgba(15, 15, 15, 0.72);
+      color: white;
+      font-size: 18px;
+      cursor: pointer;
+      z-index: 2;
+    }
+
+    .delete-btn:hover {
+      background: rgba(180, 35, 24, 0.92);
+    }
+
+    .empty-state,
+    .stream-shell {
+      border: 1px dashed rgba(148, 132, 111, 0.45);
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.45);
+    }
+
+    .empty-state {
+      padding: 40px 18px;
+      text-align: center;
+      color: var(--muted);
+    }
+
+    .stream-shell {
+      padding: 14px;
+      overflow: hidden;
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.5);
+    }
+
+    .stream-frame {
+      display: block;
+      width: 100%;
+      max-height: 78vh;
+      object-fit: contain;
+      border-radius: 18px;
+      background: #0e1116;
+    }
+
+    .live-meta {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    @keyframes fade-in {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
       }
     }
 
-    refreshStatus();
-    setInterval(refreshStatus, 3000);
+    @media (max-width: 720px) {
+      .shell {
+        width: calc(100vw - 16px);
+        margin: 8px auto;
+      }
+
+      .hero {
+        padding: 18px;
+        border-radius: 22px;
+      }
+
+      .tabs {
+        width: 100%;
+      }
+
+      .tab-btn {
+        width: 100%;
+        padding: 13px 16px;
+      }
+
+      .photo-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="hero">
+      <div class="hero-top">
+        <div>
+          <h1>MakeNTU</h1>
+          <div class="subtitle">在同一個頁面查看即時相機畫面，也能管理所有已拍攝照片。</div>
+        </div>
+        <div class="status-pill" id="bridgeLine">連線中...</div>
+      </div>
+
+      <div class="status-strip" id="boardSummary">正在自動讀取目前連線的 board 與串流狀態。</div>
+
+      <div class="tabs" role="tablist" aria-label="View switch">
+        <button id="tabPhotos" class="tab-btn active" type="button" role="tab" aria-selected="true" onclick="switchTab('photos')">相片</button>
+        <button id="tabLive" class="tab-btn" type="button" role="tab" aria-selected="false" onclick="switchTab('live')">相機實況</button>
+      </div>
+
+      <section id="panelPhotos" class="panel active" role="tabpanel">
+        <div class="photo-toolbar">
+          <div>
+            <h2 class="section-title">相片牆</h2>
+            <div class="section-note">最新照片會排在最前面。點縮圖可直接下載，右上角可刪除。</div>
+          </div>
+          <button class="ghost-btn" type="button" onclick="refreshCaptures()">重新整理</button>
+        </div>
+
+        <div id="photosEmpty" class="empty-state" hidden>目前還沒有照片。</div>
+        <div id="photoGrid" class="photo-grid"></div>
+      </section>
+
+      <section id="panelLive" class="panel" role="tabpanel" aria-hidden="true">
+        <div class="live-toolbar">
+          <div>
+            <h2 class="section-title">相機實況</h2>
+            <div class="section-note">這裡顯示目前 PC bridge 收到的即時相機畫面，方便使用者確認角度。</div>
+          </div>
+          <button class="ghost-btn" type="button" onclick="reloadVideo()">重新載入畫面</button>
+        </div>
+
+        <div class="stream-shell">
+          <img id="video" class="stream-frame" src="/video" alt="Live video stream" />
+        </div>
+        <div class="live-meta" id="liveMeta">等待串流資料...</div>
+      </section>
+    </section>
+  </div>
+
+  <script>
+    const state = {
+      activeTab: 'photos',
+      captures: [],
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    function switchTab(tabName) {
+      state.activeTab = tabName;
+
+      const photoActive = tabName === 'photos';
+      $('tabPhotos').classList.toggle('active', photoActive);
+      $('tabLive').classList.toggle('active', !photoActive);
+      $('tabPhotos').setAttribute('aria-selected', String(photoActive));
+      $('tabLive').setAttribute('aria-selected', String(!photoActive));
+
+      $('panelPhotos').classList.toggle('active', photoActive);
+      $('panelLive').classList.toggle('active', !photoActive);
+      $('panelPhotos').setAttribute('aria-hidden', String(!photoActive));
+      $('panelLive').setAttribute('aria-hidden', String(photoActive));
+    }
+
+    function formatBytes(bytes) {
+      if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let value = bytes;
+      let index = 0;
+      while (value >= 1024 && index < units.length - 1) {
+        value /= 1024;
+        index += 1;
+      }
+      return `${value.toFixed(value >= 10 || index === 0 ? 0 : 1)} ${units[index]}`;
+    }
+
+    function renderCaptures() {
+      const photoGrid = $('photoGrid');
+      const photosEmpty = $('photosEmpty');
+      photoGrid.innerHTML = '';
+
+      if (!state.captures.length) {
+        photosEmpty.hidden = false;
+        return;
+      }
+
+      photosEmpty.hidden = true;
+
+      state.captures.forEach((file) => {
+        const card = document.createElement('article');
+        card.className = 'photo-card';
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'delete-btn';
+        deleteBtn.type = 'button';
+        deleteBtn.textContent = '×';
+        deleteBtn.title = `刪除 ${file.filename}`;
+        deleteBtn.addEventListener('click', async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          await deleteCapture(file.filename);
+        });
+
+        const link = document.createElement('a');
+        link.className = 'photo-link';
+        link.href = file.download_url;
+        link.download = file.filename;
+
+        const image = document.createElement('img');
+        image.className = 'photo-thumb';
+        image.src = `${file.thumbnail_url}?t=${encodeURIComponent(file.modified_ts)}`;
+        image.alt = file.filename;
+        image.loading = 'lazy';
+
+        const meta = document.createElement('div');
+        meta.className = 'photo-meta';
+
+        const name = document.createElement('div');
+        name.className = 'photo-name';
+        name.textContent = file.filename;
+
+        const size = document.createElement('div');
+        size.className = 'photo-size';
+        size.textContent = formatBytes(file.size_bytes);
+
+        meta.appendChild(name);
+        meta.appendChild(size);
+        link.appendChild(image);
+        link.appendChild(meta);
+        card.appendChild(deleteBtn);
+        card.appendChild(link);
+        photoGrid.appendChild(card);
+      });
+    }
+
+    async function refreshCaptures() {
+      try {
+        const payload = await fetch('/api/captures').then((response) => response.json());
+        state.captures = Array.isArray(payload.files) ? payload.files : [];
+        renderCaptures();
+      } catch (error) {
+        $('photosEmpty').hidden = false;
+        $('photosEmpty').textContent = `載入照片失敗: ${error}`;
+      }
+    }
+
+    async function deleteCapture(filename) {
+      const confirmed = window.confirm(`要刪除 ${filename} 嗎？`);
+      if (!confirmed) return;
+
+      const response = await fetch(`/api/captures/${encodeURIComponent(filename)}`, {
+        method: 'DELETE',
+      });
+      if (!response.ok) {
+        const errorPayload = await response.json().catch(() => ({}));
+        window.alert(errorPayload.detail || errorPayload.message || '刪除失敗');
+        return;
+      }
+      await refreshCaptures();
+      await refreshBridgeStatus();
+    }
+
+    async function refreshBridgeStatus() {
+      try {
+        const bridge = await fetch('/api/bridge_status').then((response) => response.json());
+
+        if (bridge.video_connected) {
+          $('bridgeLine').textContent = `已連線 ${bridge.board_ip}:${bridge.video_port}`;
+          $('boardSummary').textContent = `自動連線到 board ${bridge.board_ip}，照片儲存在 ${bridge.capture_dir}，目前共 ${bridge.saved_count || 0} 張。`;
+          $('liveMeta').textContent = bridge.latest_frame_age_sec == null
+            ? '串流已連線，等待第一張畫面。'
+            : `串流正常，最新畫面約 ${bridge.latest_frame_age_sec} 秒前更新。`;
+        } else {
+          $('bridgeLine').textContent = `尚未連線：${bridge.video_error || '等待中'}`;
+          $('boardSummary').textContent = bridge.board_ip
+            ? `目前設定的 board 是 ${bridge.board_ip}，正在等待串流連線。`
+            : '目前尚未取得 board 位址或串流尚未就緒。';
+          $('liveMeta').textContent = '目前還沒有可顯示的即時畫面。';
+        }
+      } catch (error) {
+        $('bridgeLine').textContent = `狀態更新失敗：${error}`;
+        $('boardSummary').textContent = '目前無法取得 bridge 狀態。';
+      }
+    }
+
+    function reloadVideo() {
+      const video = $('video');
+      video.src = `/video?ts=${Date.now()}`;
+    }
+
+    refreshCaptures();
+    refreshBridgeStatus();
+    setInterval(refreshCaptures, 3000);
+    setInterval(refreshBridgeStatus, 3000);
   </script>
 </body>
 </html>
