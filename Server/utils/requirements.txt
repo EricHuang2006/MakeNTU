@@ -1,3 +1,7 @@
 opencv-python-headless
 numpy==1.26.4
 pyserial
+python-dotenv
+requests
+tflite-runtime
+gpiod
