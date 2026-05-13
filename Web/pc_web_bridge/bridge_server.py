@@ -15,7 +15,6 @@ from __future__ import annotations
 import argparse
 import json
 import socket
-import ssl
 import struct
 import threading
 import time
@@ -25,9 +24,7 @@ from typing import Any
 from flask import Flask, Response, abort, jsonify, render_template, request, send_file
 
 
-# The board stream uses struct.pack("Q", len(payload)) in main.py,
-# so the bridge must decode the header with the same native format.
-HEADER_FORMAT = "Q"
+HEADER_FORMAT = "!Q"
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 
 
@@ -38,19 +35,12 @@ class BridgeState:
         video_port: int,
         command_port: int,
         capture_dir: Path,
-        ca_cert_path: Path,
-        server_hostname: str,
     ) -> None:
         self.board_ip = str(board_ip).strip()
         self.video_port = video_port
         self.command_port = command_port
         self.capture_dir = capture_dir
         self.capture_dir.mkdir(parents=True, exist_ok=True)
-        self.ca_cert_path = ca_cert_path.resolve()
-        self.server_hostname = server_hostname
-        if not self.ca_cert_path.is_file():
-            raise FileNotFoundError(f"CA certificate not found: {self.ca_cert_path}")
-        self.ssl_context = ssl.create_default_context(cafile=str(self.ca_cert_path))
 
         self.lock = threading.Lock()
         self.latest_jpeg: bytes | None = None
@@ -77,9 +67,6 @@ class BridgeState:
     def connection_target(self) -> tuple[str, int, int]:
         with self.lock:
             return self.board_ip, self.video_port, self.command_port
-
-    def tls_target(self) -> tuple[ssl.SSLContext, str]:
-        return self.ssl_context, self.server_hostname
 
     def set_frame(self, jpeg: bytes) -> None:
         with self.lock:
@@ -242,14 +229,12 @@ def video_reader_loop(state: BridgeState) -> None:
     while True:
         try:
             board_ip, video_port, _command_port = state.connection_target()
-            ssl_context, server_hostname = state.tls_target()
             if not board_ip:
                 state.set_video_error("board IP not set")
                 time.sleep(0.5)
                 continue
             print(f"[bridge/video] connecting to {board_ip}:{video_port}")
-            with socket.create_connection((board_ip, video_port), timeout=5) as raw_sock:
-                sock = ssl_context.wrap_socket(raw_sock, server_hostname=server_hostname)
+            with socket.create_connection((board_ip, video_port), timeout=5) as sock:
                 sock.settimeout(10)
                 print("[bridge/video] connected")
                 while True:
@@ -285,12 +270,10 @@ def auto_capture_loop(state: BridgeState) -> None:
 def send_board_command(state: BridgeState, command: dict[str, Any], timeout: float = 5.0) -> dict[str, Any]:
     try:
         board_ip, _video_port, command_port = state.connection_target()
-        ssl_context, server_hostname = state.tls_target()
         if not board_ip:
             abort_json(400, "board IP not set")
         print(f"[bridge/command] -> board: {json.dumps(command, sort_keys=True)}")
-        with socket.create_connection((board_ip, command_port), timeout=timeout) as raw_sock:
-            sock = ssl_context.wrap_socket(raw_sock, server_hostname=server_hostname)
+        with socket.create_connection((board_ip, command_port), timeout=timeout) as sock:
             file = sock.makefile("rwb")
             file.write((json.dumps(command) + "\n").encode("utf-8"))
             file.flush()
@@ -419,13 +402,7 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0", help="PC web server bind address")
     parser.add_argument("--port", type=int, default=8000, help="PC web server port")
     parser.add_argument("--capture-dir", default="captures", help="where photos are saved on the PC")
-    parser.add_argument("--ca-cert", default="server.crt", help="CA certificate path for board TLS")
-    parser.add_argument("--server-hostname", default="makentu-imx93", help="TLS server hostname to verify")
     args = parser.parse_args()
-
-    ca_cert_path = Path(args.ca_cert)
-    if not ca_cert_path.is_absolute():
-        ca_cert_path = (script_dir / ca_cert_path).resolve()
 
     capture_dir = Path(args.capture_dir)
     if not capture_dir.is_absolute():
@@ -436,8 +413,6 @@ def main() -> None:
         args.video_port,
         args.command_port,
         capture_dir,
-        ca_cert_path,
-        args.server_hostname,
     )
     threading.Thread(target=video_reader_loop, args=(state,), daemon=True).start()
     threading.Thread(target=auto_capture_loop, args=(state,), daemon=True).start()
